@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Save, PieChart, Calendar, ChevronLeft, ChevronRight } from "lucide-react"
@@ -40,7 +40,8 @@ interface DailyMacros {
   fats: number
 }
 
-export default function DietPage() {
+// Create a client component that uses useSearchParams
+function DietPageContent() {
   const { toast } = useToast()
   const searchParams = useSearchParams()
   const tabParam = searchParams.get('tab')
@@ -587,6 +588,15 @@ export default function DietPage() {
         </Tabs>
       </div>
     </MobileLayout>
+  )
+}
+
+// Main page component with Suspense boundary
+export default function DietPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <DietPageContent />
+    </Suspense>
   )
 }
 
