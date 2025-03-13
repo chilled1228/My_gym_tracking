@@ -199,9 +199,15 @@ export function usePlanManager(): UsePlanManagerReturn {
       const customWorkoutPlans = safeGetItem<WorkoutPlan[]>("customWorkoutPlans", [])
       const customDietPlans = safeGetItem<DietPlan[]>("customDietPlans", [])
       
+      // Get current plan IDs from localStorage
+      const currentWorkoutPlanIdFromStorage = safeGetItem<string>("currentWorkoutPlanId", "default");
+      const currentDietPlanIdFromStorage = safeGetItem<string>("currentDietPlanId", "default");
+      
       console.log("Loaded plans from localStorage:", {
         customWorkoutPlans: customWorkoutPlans.length > 0 ? customWorkoutPlans : "None",
-        customDietPlans: customDietPlans.length > 0 ? customDietPlans : "None"
+        customDietPlans: customDietPlans.length > 0 ? customDietPlans : "None",
+        currentWorkoutPlanIdFromStorage,
+        currentDietPlanIdFromStorage
       });
       
       // Check if we have a custom workout plan
@@ -215,8 +221,6 @@ export function usePlanManager(): UsePlanManagerReturn {
         console.log("Reloaded custom workout plan:", customPlan.name)
       } else {
         // Check if we should use the default plan or clear the state
-        const currentWorkoutPlanIdFromStorage = safeGetItem<string>("currentWorkoutPlanId", "default");
-        
         if (currentWorkoutPlanIdFromStorage === "") {
           // Clear the state completely
           console.log("No workout plan ID found, clearing workout plan state");
@@ -228,7 +232,7 @@ export function usePlanManager(): UsePlanManagerReturn {
             description: "",
             days: []
           });
-        } else {
+        } else if (currentWorkoutPlanIdFromStorage === "default") {
           // Use the default plan
           const defaultPlan = workoutPlans[0]
           console.log("Setting default workout plan:", defaultPlan);
@@ -236,6 +240,19 @@ export function usePlanManager(): UsePlanManagerReturn {
           setCurrentWorkoutPlan(defaultPlan)
           setAvailableWorkoutPlans([defaultPlan])
           console.log("No custom workout plan found, using default")
+        } else {
+          // Clear the state if the ID doesn't match any known plan
+          console.log("Unknown workout plan ID, clearing workout plan state");
+          setAvailableWorkoutPlans([]);
+          setCurrentWorkoutPlanId("");
+          setCurrentWorkoutPlan({
+            id: "",
+            name: "",
+            description: "",
+            days: []
+          });
+          // Update localStorage to reflect the cleared state
+          safeSetItem("currentWorkoutPlanId", "", { replaceExisting: true });
         }
       }
       
@@ -263,8 +280,6 @@ export function usePlanManager(): UsePlanManagerReturn {
         }
       } else {
         // Check if we should use the default plan or clear the state
-        const currentDietPlanIdFromStorage = safeGetItem<string>("currentDietPlanId", "default");
-        
         if (currentDietPlanIdFromStorage === "") {
           // Clear the state completely
           console.log("No diet plan ID found, clearing diet plan state");
@@ -280,7 +295,7 @@ export function usePlanManager(): UsePlanManagerReturn {
             targetFats: 0,
             meals: []
           });
-        } else {
+        } else if (currentDietPlanIdFromStorage === "default") {
           // Use the default plan
           const defaultPlan = dietPlans[0]
           console.log("Setting default diet plan:", defaultPlan);
@@ -288,6 +303,23 @@ export function usePlanManager(): UsePlanManagerReturn {
           setCurrentDietPlan(defaultPlan)
           setAvailableDietPlans([defaultPlan])
           console.log("No custom diet plan found, using default")
+        } else {
+          // Clear the state if the ID doesn't match any known plan
+          console.log("Unknown diet plan ID, clearing diet plan state");
+          setAvailableDietPlans([]);
+          setCurrentDietPlanId("");
+          setCurrentDietPlan({
+            id: "",
+            name: "",
+            description: "",
+            targetCalories: 0,
+            targetProtein: 0,
+            targetCarbs: 0,
+            targetFats: 0,
+            meals: []
+          });
+          // Update localStorage to reflect the cleared state
+          safeSetItem("currentDietPlanId", "", { replaceExisting: true });
         }
       }
       
@@ -461,6 +493,24 @@ export function usePlanManager(): UsePlanManagerReturn {
       dietPlans: importedDietPlans ? `${importedDietPlans.length} plans` : "None"
     });
     
+    // First, clear all existing plans from localStorage to ensure a clean slate
+    if (importedWorkoutPlans && importedWorkoutPlans.length > 0) {
+      console.log("Clearing all existing workout plans from localStorage");
+      localStorage.removeItem("customWorkoutPlans");
+      localStorage.removeItem("currentWorkoutPlanId");
+      localStorage.removeItem("workoutHistory");
+      localStorage.removeItem("workoutProgress");
+    }
+    
+    if (importedDietPlans && importedDietPlans.length > 0) {
+      console.log("Clearing all existing diet plans from localStorage");
+      localStorage.removeItem("customDietPlans");
+      localStorage.removeItem("currentDietPlanId");
+      localStorage.removeItem("dietHistory");
+      localStorage.removeItem("macroHistory");
+      localStorage.removeItem("currentDietDay");
+    }
+    
     // Handle workout plans import
     if (importedWorkoutPlans && importedWorkoutPlans.length > 0) {
       // Take only the first imported plan
@@ -473,11 +523,6 @@ export function usePlanManager(): UsePlanManagerReturn {
       if (normalizedPlan) {
         console.log("Workout plan validated successfully:", normalizedPlan);
         
-        // First, delete all existing workout plans and related data
-        // Pass true to skip resetting to default plan
-        console.log("Deleting existing workout plans...");
-        deleteAllWorkoutPlans(true);
-        
         // Add prefix to imported plan ID to avoid conflicts with default plans
         const processedPlan = {
           ...normalizedPlan,
@@ -486,14 +531,24 @@ export function usePlanManager(): UsePlanManagerReturn {
         };
         console.log("Processed workout plan:", processedPlan);
         
-        // Save to localStorage with validation
+        // Save directly to localStorage first
+        try {
+          localStorage.setItem("customWorkoutPlans", JSON.stringify([processedPlan]));
+          localStorage.setItem("currentWorkoutPlanId", processedPlan.id);
+          console.log("Directly saved workout plan to localStorage");
+        } catch (error) {
+          console.error("Error directly saving workout plan:", error);
+        }
+        
+        // Then use safeSetItem as a backup
         const saveResult = safeSetItem("customWorkoutPlans", [processedPlan], {
           validateFn: (item) => {
             return item && 
                    typeof item.id === 'string' && 
                    typeof item.name === 'string' && 
                    Array.isArray(item.days);
-          }
+          },
+          replaceExisting: true
         });
         console.log("Saved workout plan to localStorage:", saveResult);
         
@@ -502,11 +557,7 @@ export function usePlanManager(): UsePlanManagerReturn {
         setAvailableWorkoutPlans([processedPlan]);
         setCurrentWorkoutPlanId(processedPlan.id);
         setCurrentWorkoutPlan(processedPlan);
-        safeSetItem("currentWorkoutPlanId", processedPlan.id);
-        
-        // Verify that the plan was properly saved
-        console.log("Verifying workout plan was saved...");
-        verifyPlanSaved("workout", processedPlan);
+        safeSetItem("currentWorkoutPlanId", processedPlan.id, { replaceExisting: true });
         
         console.log("Successfully imported and replaced workout plan");
         workoutImported = true;
@@ -527,11 +578,6 @@ export function usePlanManager(): UsePlanManagerReturn {
       if (normalizedPlan) {
         console.log("Diet plan validated successfully:", normalizedPlan);
         
-        // First, delete all existing diet plans and related data
-        // Pass true to skip resetting to default plan
-        console.log("Deleting existing diet plans...");
-        deleteAllDietPlans(true);
-        
         // Add prefix to imported plan ID to avoid conflicts with default plans
         const processedPlan = {
           ...normalizedPlan,
@@ -540,14 +586,24 @@ export function usePlanManager(): UsePlanManagerReturn {
         };
         console.log("Processed diet plan:", processedPlan);
         
-        // Save to localStorage with validation
+        // Save directly to localStorage first
+        try {
+          localStorage.setItem("customDietPlans", JSON.stringify([processedPlan]));
+          localStorage.setItem("currentDietPlanId", processedPlan.id);
+          console.log("Directly saved diet plan to localStorage");
+        } catch (error) {
+          console.error("Error directly saving diet plan:", error);
+        }
+        
+        // Then use safeSetItem as a backup
         const saveResult = safeSetItem("customDietPlans", [processedPlan], {
           validateFn: (item) => {
             return item && 
                    typeof item.id === 'string' && 
                    typeof item.name === 'string' && 
                    Array.isArray(item.meals);
-          }
+          },
+          replaceExisting: true
         });
         console.log("Saved diet plan to localStorage:", saveResult);
         
@@ -556,11 +612,7 @@ export function usePlanManager(): UsePlanManagerReturn {
         setAvailableDietPlans([processedPlan]);
         setCurrentDietPlanId(processedPlan.id);
         setCurrentDietPlan(processedPlan);
-        safeSetItem("currentDietPlanId", processedPlan.id);
-        
-        // Verify that the plan was properly saved
-        console.log("Verifying diet plan was saved...");
-        verifyPlanSaved("diet", processedPlan);
+        safeSetItem("currentDietPlanId", processedPlan.id, { replaceExisting: true });
         
         console.log("Successfully imported and replaced diet plan");
         dietImported = true;
@@ -569,40 +621,50 @@ export function usePlanManager(): UsePlanManagerReturn {
       }
     }
     
-    // If any plans were imported, force reload to ensure state is up to date
+    // If any plans were imported, verify and reload if needed
     if (workoutImported || dietImported) {
-      // Add a small delay to ensure localStorage has been updated
-      console.log("Plans imported, scheduling force reload...");
-      setTimeout(() => {
-        console.log("Executing delayed force reload...");
+      console.log("Plans imported, verifying and reloading...");
+      
+      // Verify that plans were properly saved
+      const verifyAndReload = () => {
+        const storedWorkoutPlans = safeGetItem<WorkoutPlan[]>("customWorkoutPlans", []);
+        const storedDietPlans = safeGetItem<DietPlan[]>("customDietPlans", []);
+        
+        console.log("Verification check:", {
+          workoutImported,
+          dietImported,
+          storedWorkoutPlans: storedWorkoutPlans.length,
+          storedDietPlans: storedDietPlans.length
+        });
+        
+        // If plans weren't saved properly, reload the page
+        if ((workoutImported && storedWorkoutPlans.length === 0) || 
+            (dietImported && storedDietPlans.length === 0)) {
+          console.warn("Plans not properly saved, reloading page...");
+          window.location.reload();
+          return;
+        }
+        
+        // Force reload plans to ensure state is up to date
         forceReloadPlans();
         
-        // Double-check after a longer delay to ensure everything is updated
+        // Final check after reload
         setTimeout(() => {
-          console.log("Executing final verification reload...");
-          forceReloadPlans();
+          const finalWorkoutPlans = safeGetItem<WorkoutPlan[]>("customWorkoutPlans", []);
+          const finalDietPlans = safeGetItem<DietPlan[]>("customDietPlans", []);
           
-          // Check plan display consistency
-          setTimeout(() => {
-            console.log("Checking plan display consistency after import...");
-            checkPlanDisplayConsistency();
-            
-            // If we still have issues, reload the page
-            setTimeout(() => {
-              const storedWorkoutPlans = safeGetItem<WorkoutPlan[]>("customWorkoutPlans", []);
-              const storedDietPlans = safeGetItem<DietPlan[]>("customDietPlans", []);
-              
-              if ((workoutImported && storedWorkoutPlans.length === 0) || 
-                  (dietImported && storedDietPlans.length === 0)) {
-                console.warn("Plans not properly loaded after import, reloading page...");
-                window.location.reload();
-              }
-            }, 300);
-          }, 200);
-          
-          console.log("Import process completed.");
+          if ((workoutImported && finalWorkoutPlans.length === 0) || 
+              (dietImported && finalDietPlans.length === 0)) {
+            console.warn("Plans still not loaded after reload, forcing page refresh...");
+            window.location.reload();
+          } else {
+            console.log("Import process completed successfully.");
+          }
         }, 500);
-      }, 100);
+      };
+      
+      // Add a small delay to ensure localStorage has been updated
+      setTimeout(verifyAndReload, 200);
     } else {
       console.log("No plans were imported.");
     }
