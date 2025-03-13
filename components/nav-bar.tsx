@@ -39,8 +39,8 @@ export function NavBar() {
   }
   
   return (
-    <nav className="fixed bottom-0 left-0 right-0 bg-background border-t border-border z-50 shadow-sm">
-      <div className="container max-w-md mx-auto px-3">
+    <nav className="fixed bottom-0 left-0 right-0 bg-background border-t border-border z-50 shadow-sm safe-area-inset-bottom">
+      <div className="container mx-auto px-1 sm:px-3">
         <div className="flex items-center justify-around h-16">
           {navItems.map((item) => {
             const active = isActive(item.href)
@@ -50,7 +50,7 @@ export function NavBar() {
               <Link
                 key={item.href}
                 href={item.href}
-                className="flex flex-col items-center justify-center w-full h-full text-xs relative"
+                className="flex flex-col items-center justify-center w-full h-full text-[10px] sm:text-xs relative py-2"
               >
                 <div className="relative flex flex-col items-center">
                   <Icon

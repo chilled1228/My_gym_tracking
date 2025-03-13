@@ -12,8 +12,8 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   minimumScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  maximumScale: 5,
+  userScalable: true,
   viewportFit: 'cover',
 }
 
@@ -24,7 +24,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="min-h-screen bg-background antialiased overflow-hidden">
+      <body className="min-h-screen bg-background antialiased overflow-hidden safe-area-inset-top safe-area-inset-left safe-area-inset-right">
         <ThemeProvider
           attribute="class"
           defaultTheme="system"

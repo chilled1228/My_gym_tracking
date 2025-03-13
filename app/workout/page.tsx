@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
-import { Save, Plus, Minus, History, Check, ChevronLeft, ChevronRight, ArrowRight, RefreshCw, Calendar, HelpCircle, Trophy, Info } from "lucide-react"
+import { Save, Plus, Minus, History, Check, ChevronLeft, ChevronRight, ArrowRight, RefreshCw, Calendar, HelpCircle, Trophy, Info, CheckCircle, Circle } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { MobileLayout } from "@/components/mobile-layout"
 import { safeGetItem, safeSetItem } from "@/lib/utils"
@@ -13,6 +13,11 @@ import { Input } from "@/components/ui/input"
 import Link from "next/link"
 import { useSyncIndicator } from "@/hooks/use-sync-indicator"
 import { format, addWeeks, startOfWeek, isAfter, isBefore, startOfDay, isSameDay } from "date-fns"
+import { usePlanManager } from "@/hooks/use-plan-manager"
+import { PlanSelector } from "@/components/plan-selector"
+import { PlanImport } from "@/components/plan-import"
+import { PlanExport } from "@/components/plan-export"
+import { Exercise, WorkoutDay } from "@/lib/plan-templates"
 import {
   Dialog,
   DialogContent,
@@ -27,19 +32,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-
-interface Exercise {
-  name: string
-  sets: string
-  reps: number
-  completed: boolean
-  tooltip?: string
-}
-
-interface WorkoutDay {
-  name: string
-  exercises: Exercise[]
-}
+import { cn } from "@/lib/utils"
 
 // New interface for tracking workouts by date
 interface DatedWorkout {
@@ -58,950 +51,823 @@ export default function WorkoutPage() {
   const [showCompletionDialog, setShowCompletionDialog] = useState(false)
   const [currentStreak, setCurrentStreak] = useState(0)
   
-  // Default workout template
-  const defaultWorkoutPlan: WorkoutDay[] = [
-    {
-      name: "Day 1: Chest & Triceps",
-      exercises: [
-        { 
-          name: "Bench Press", 
-          sets: "4x8-10", 
-          reps: 0, 
-          completed: false,
-          tooltip: "Keep your feet flat on the floor, shoulders back, and maintain a slight arch in your lower back."
-        },
-        { 
-          name: "Incline Dumbbell Press", 
-          sets: "4x8-10", 
-          reps: 0, 
-          completed: false,
-          tooltip: "Set the bench at a 30-45 degree angle. Lower the weights until your elbows are at 90 degrees."
-        },
-        { 
-          name: "Cable Flys", 
-          sets: "3x12", 
-          reps: 0, 
-          completed: false,
-          tooltip: "Keep a slight bend in your elbows throughout the movement. Focus on squeezing your chest."
-        },
-        { 
-          name: "Dips", 
-          sets: "3x10", 
-          reps: 0, 
-          completed: false,
-          tooltip: "Lean forward slightly to target chest more. Keep elbows close to body for triceps focus."
-        },
-        { 
-          name: "Skull Crushers", 
-          sets: "4x10", 
-          reps: 0, 
-          completed: false,
-          tooltip: "Keep your upper arms stationary and perpendicular to the floor. Lower the weight to your forehead."
-        },
-        { 
-          name: "Rope Triceps Pushdown", 
-          sets: "3x12", 
-          reps: 0, 
-          completed: false,
-          tooltip: "Keep your elbows close to your body. Focus on the contraction at the bottom of the movement."
-        },
-      ],
-    },
-    {
-      name: "Day 2: Back & Biceps",
-      exercises: [
-        { name: "Deadlifts", sets: "4x6-8", reps: 0, completed: false },
-        { name: "Pull-Ups", sets: "4x10", reps: 0, completed: false },
-        { name: "Bent-over Rows", sets: "4x8-10", reps: 0, completed: false },
-        { name: "Lat Pulldown", sets: "3x12", reps: 0, completed: false },
-        { name: "Barbell Bicep Curls", sets: "4x10", reps: 0, completed: false },
-        { name: "Hammer Curls", sets: "3x12", reps: 0, completed: false },
-      ],
-    },
-    {
-      name: "Day 3: Legs & Abs",
-      exercises: [
-        { name: "Squats", sets: "4x8-10", reps: 0, completed: false },
-        { name: "Romanian Deadlifts", sets: "3x10", reps: 0, completed: false },
-        { name: "Leg Press", sets: "4x12", reps: 0, completed: false },
-        { name: "Leg Curls", sets: "3x12", reps: 0, completed: false },
-        { name: "Hanging Leg Raises", sets: "4x12", reps: 0, completed: false },
-        { name: "Cable Crunches", sets: "3x15", reps: 0, completed: false },
-      ],
-    },
-    {
-      name: "Day 4: Shoulders & Traps",
-      exercises: [
-        { name: "Overhead Press", sets: "4x8-10", reps: 0, completed: false },
-        { name: "Lateral Raises", sets: "4x12", reps: 0, completed: false },
-        { name: "Rear Delt Flys", sets: "3x12", reps: 0, completed: false },
-        { name: "Shrugs", sets: "4x15", reps: 0, completed: false },
-      ],
-    },
-    {
-      name: "Day 5: Arms & Abs",
-      exercises: [
-        { name: "Barbell Biceps Curl", sets: "4x10", reps: 0, completed: false },
-        { name: "Close-Grip Bench Press", sets: "4x10", reps: 0, completed: false },
-        { name: "Concentration Curls", sets: "3x12", reps: 0, completed: false },
-        { name: "Rope Pushdowns", sets: "3x12", reps: 0, completed: false },
-        { name: "Hanging Leg Raises", sets: "4x12", reps: 0, completed: false },
-        { name: "Planks", sets: "3x1 min", reps: 0, completed: false },
-      ],
-    },
-    {
-      name: "Day 6: Cardio & Core",
-      exercises: [
-        { name: "HIIT", sets: "15-20 min", reps: 0, completed: false },
-        { name: "Cable Twists", sets: "3x12", reps: 0, completed: false },
-        { name: "Russian Twists", sets: "3x15", reps: 0, completed: false },
-        { name: "Decline Sit-Ups", sets: "4x12", reps: 0, completed: false },
-      ],
-    },
-    {
-      name: "Day 7: Rest",
-      exercises: [{ name: "Active Recovery (Optional)", sets: "Light walking/stretching", reps: 0, completed: false }],
-    },
-  ]
+  // Use the plan manager hook
+  const { 
+    currentWorkoutPlan, 
+    availableWorkoutPlans, 
+    currentWorkoutPlanId, 
+    changeWorkoutPlan,
+    importPlans
+  } = usePlanManager()
   
-  // State for current workout
-  const [currentWorkoutDay, setCurrentWorkoutDay] = useState<number>(0)
-  const [workoutPlan, setWorkoutPlan] = useState<WorkoutDay>(defaultWorkoutPlan[0])
-  
-  // State for tracking workouts by date
-  const [datedWorkouts, setDatedWorkouts] = useState<DatedWorkout[]>([])
+  // State for tracking the current date and workout
   const [currentDate, setCurrentDate] = useState<Date>(new Date())
-  const [showNextWeekDialog, setShowNextWeekDialog] = useState(false)
-
-  // Load saved workout data from localStorage on component mount
+  const [currentDatedWorkout, setCurrentDatedWorkout] = useState<DatedWorkout | null>(null)
+  const [workoutHistory, setWorkoutHistory] = useState<DatedWorkout[]>([])
+  
+  // Load workout history on mount
   useEffect(() => {
-    // Load dated workouts
-    const savedDatedWorkouts = safeGetItem<DatedWorkout[]>("datedWorkouts", [])
-    if (savedDatedWorkouts.length > 0) {
-      setDatedWorkouts(savedDatedWorkouts)
-      
-      // Find today's workout or the most recent one
-      const today = new Date().toISOString().split('T')[0]
-      const todaysWorkout = savedDatedWorkouts.find(day => day.date === today)
-      
-      if (todaysWorkout) {
-        // If today's workout exists, use it
-        setWorkoutPlan(todaysWorkout.workout)
-        setCurrentDate(new Date(today))
-        
-        // Find the day index
-        const dayIndex = defaultWorkoutPlan.findIndex(day => day.name === todaysWorkout.workout.name)
-        if (dayIndex >= 0) {
-          setCurrentWorkoutDay(dayIndex)
-        }
-      } else {
-        // Find the most recent workout day
-        const sortedDays = [...savedDatedWorkouts].sort((a, b) => 
-          new Date(b.date).getTime() - new Date(a.date).getTime()
-        )
-        
-        if (sortedDays.length > 0) {
-          const latestDate = new Date(sortedDays[0].date)
-          
-          // If the latest date is in the past, create a new day for today
-          if (isBefore(latestDate, startOfDay(new Date()))) {
-            createNewWorkoutDay(today, 0) // Start with Day 1
-          } else {
-            // Otherwise use the latest workout
-            setWorkoutPlan(sortedDays[0].workout)
-            setCurrentDate(latestDate)
-            
-            // Find the day index
-            const dayIndex = defaultWorkoutPlan.findIndex(day => day.name === sortedDays[0].workout.name)
-            if (dayIndex >= 0) {
-              setCurrentWorkoutDay(dayIndex)
-            }
-          }
-        } else {
-          // If no workout days exist, create one for today
-          createNewWorkoutDay(new Date().toISOString().split('T')[0], 0) // Start with Day 1
-        }
-      }
-    } else {
-      // If no workout days exist, create one for today
-      createNewWorkoutDay(new Date().toISOString().split('T')[0], 0) // Start with Day 1
+    const savedHistory = safeGetItem("workoutHistory", [])
+    if (savedHistory && Array.isArray(savedHistory)) {
+      setWorkoutHistory(savedHistory)
     }
-
-    // Show help dialog for first-time users
-    const hasSeenHelp = safeGetItem<boolean>("hasSeenWorkoutHelp", false)
-    if (!hasSeenHelp) {
-      // Set a small delay to show the help dialog after the page loads
-      const timer = setTimeout(() => {
-        setShowHelpDialog(true)
-        safeSetItem("hasSeenWorkoutHelp", true)
-      }, 1000)
-      
-      return () => clearTimeout(timer)
-    }
+    
+    // Calculate streak
+    calculateStreak()
   }, [])
   
-  // Create a new workout day
+  // Update current workout when date changes
+  useEffect(() => {
+    try {
+      if (!currentWorkoutPlan || !currentWorkoutPlan.days || !currentWorkoutPlan.days.length) {
+        console.warn("No valid workout plan available");
+        return;
+      }
+      
+      const dateString = currentDate.toISOString().split('T')[0]
+      const existingWorkout = workoutHistory.find(
+        (workout) => workout.date === dateString
+      )
+      
+      if (existingWorkout) {
+        setCurrentDatedWorkout(existingWorkout)
+      } else {
+        // Get the day of the week (0-6, where 0 is Sunday)
+        const dayIndex = currentDate.getDay()
+        // Adjust to make Monday index 0 (for workout plans that start on Monday)
+        const adjustedDayIndex = dayIndex === 0 ? 6 : dayIndex - 1
+        
+        // Create a new workout day based on the current plan
+        createNewWorkoutDay(dateString, adjustedDayIndex)
+      }
+    } catch (error) {
+      console.error("Error updating current workout:", error);
+      toast({
+        title: "Error Loading Workout",
+        description: "There was an error loading the workout for this date.",
+        variant: "destructive",
+      });
+    }
+  }, [currentDate, workoutHistory, currentWorkoutPlan])
+  
+  // Create a new workout day for the current date
   const createNewWorkoutDay = (dateString: string, dayIndex: number) => {
-    // Deep clone the default workout for the specified day
-    const newWorkout: WorkoutDay = JSON.parse(JSON.stringify(defaultWorkoutPlan[dayIndex]))
+    // Make sure we have a valid workout plan
+    if (!currentWorkoutPlan || !currentWorkoutPlan.days || !currentWorkoutPlan.days.length) {
+      console.error("No valid workout plan available");
+      toast({
+        title: "Error",
+        description: "No valid workout plan available. Please select a plan.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    // Get the workout day from the current plan based on the day index
+    // If the day index is out of bounds, use the first day
+    const planDayIndex = dayIndex % currentWorkoutPlan.days.length
+    const workoutDay = JSON.parse(JSON.stringify(currentWorkoutPlan.days[planDayIndex]))
     
     const newDatedWorkout: DatedWorkout = {
       date: dateString,
-      workout: newWorkout,
-      completed: false
+      workout: workoutDay,
+      completed: false,
     }
     
-    setWorkoutPlan(newWorkout)
-    setCurrentWorkoutDay(dayIndex)
-    setCurrentDate(new Date(dateString))
-    
-    // Add to dated workouts
-    const updatedDatedWorkouts = [...datedWorkouts, newDatedWorkout]
-    setDatedWorkouts(updatedDatedWorkouts)
-    safeSetItem("datedWorkouts", updatedDatedWorkouts)
+    setCurrentDatedWorkout(newDatedWorkout)
   }
   
-  // Navigate to a specific date
+  // Navigation functions
   const navigateToDate = (date: Date, dayIndex?: number) => {
     const dateString = date.toISOString().split('T')[0]
-    const existingWorkoutDay = datedWorkouts.find(day => day.date === dateString)
-    
-    if (existingWorkoutDay) {
-      // If workout for this date exists, load it
-      setWorkoutPlan(existingWorkoutDay.workout)
-      setCurrentDate(date)
-      
-      // Find the day index
-      const dayIndex = defaultWorkoutPlan.findIndex(day => day.name === existingWorkoutDay.workout.name)
-      if (dayIndex >= 0) {
-        setCurrentWorkoutDay(dayIndex)
-      }
-    } else if (dayIndex !== undefined) {
-      // Create a new workout day for this date with the specified day index
-      createNewWorkoutDay(dateString, dayIndex)
-    } else {
-      // Create a new workout day for this date with the next day in sequence
-      const nextDayIndex = (currentWorkoutDay + 1) % 7
-      createNewWorkoutDay(dateString, nextDayIndex)
-    }
-  }
-  
-  // Navigate to previous day
-  const goToPreviousDay = () => {
-    const prevDate = new Date(currentDate)
-    prevDate.setDate(prevDate.getDate() - 1)
-    navigateToDate(prevDate)
-  }
-  
-  // Navigate to next day
-  const goToNextDay = () => {
-    const nextDate = new Date(currentDate)
-    nextDate.setDate(nextDate.getDate() + 1)
-    
-    // If moving to a new week, show confirmation dialog
-    const currentWeekStart = startOfWeek(currentDate, { weekStartsOn: 1 })
-    const nextWeekStart = startOfWeek(nextDate, { weekStartsOn: 1 })
-    
-    if (nextWeekStart.getTime() !== currentWeekStart.getTime() && 
-        isAfter(nextDate, new Date())) {
-      setShowNextWeekDialog(true)
-    } else {
-      navigateToDate(nextDate)
-    }
-  }
-  
-  // Move to next week
-  const moveToNextWeek = () => {
-    const nextWeekDate = addWeeks(currentDate, 1)
-    // Reset to Day 1 for the new week
-    navigateToDate(nextWeekDate, 0)
-    setShowNextWeekDialog(false)
-  }
-  
-  // Format date for display
-  const formatCurrentDate = (date: Date) => {
-    return format(date, 'EEEE, MMMM d, yyyy')
-  }
-  
-  // Check if a date is today
-  const isToday = (date: Date) => {
-    return isSameDay(date, new Date())
-  }
-
-  // Calculate current streak
-  const calculateStreak = () => {
-    if (datedWorkouts.length === 0) return 0
-    
-    // Sort workouts by date (newest first)
-    const sortedWorkouts = [...datedWorkouts].sort((a, b) => 
-      new Date(b.date).getTime() - new Date(a.date).getTime()
+    const existingWorkout = workoutHistory.find(
+      (workout) => workout.date === dateString
     )
     
+    if (existingWorkout) {
+      setCurrentDatedWorkout(existingWorkout)
+    } else if (dayIndex !== undefined) {
+      createNewWorkoutDay(dateString, dayIndex)
+    }
+    
+    setCurrentDate(date)
+  }
+  
+  const goToPreviousDay = () => {
+    const previousDay = new Date(currentDate)
+    previousDay.setDate(previousDay.getDate() - 1)
+    navigateToDate(previousDay)
+  }
+  
+  const goToNextDay = () => {
+    const nextDay = new Date(currentDate)
+    nextDay.setDate(nextDay.getDate() + 1)
+    navigateToDate(nextDay)
+  }
+  
+  const moveToNextWeek = () => {
+    const nextWeek = addWeeks(currentDate, 1)
+    navigateToDate(nextWeek)
+  }
+  
+  // Helper functions
+  const formatCurrentDate = (date: Date) => {
+    return format(date, "EEEE, MMMM d, yyyy")
+  }
+  
+  const isToday = (date: Date) => {
+    const today = new Date()
+    return isSameDay(date, today)
+  }
+  
+  const calculateStreak = () => {
     let streak = 0
     const today = new Date()
     today.setHours(0, 0, 0, 0)
     
-    // Check if there's a completed workout for today
+    // Sort history by date (newest first)
+    const sortedHistory = [...workoutHistory].sort((a, b) => {
+      return new Date(b.date).getTime() - new Date(a.date).getTime()
+    })
+    
+    // Check if there's a workout for today
     const todayStr = today.toISOString().split('T')[0]
-    const hasTodayWorkout = sortedWorkouts.some(workout => 
-      workout.date === todayStr && workout.completed
+    const hasTodayWorkout = sortedHistory.some(
+      (workout) => workout.date === todayStr && workout.completed
     )
     
+    // If no workout for today, check if there's one for yesterday
     if (!hasTodayWorkout) {
-      // Check if there's a completed workout for yesterday
       const yesterday = new Date(today)
       yesterday.setDate(yesterday.getDate() - 1)
       const yesterdayStr = yesterday.toISOString().split('T')[0]
       
-      const hasYesterdayWorkout = sortedWorkouts.some(workout => 
-        workout.date === yesterdayStr && workout.completed
+      const hasYesterdayWorkout = sortedHistory.some(
+        (workout) => workout.date === yesterdayStr && workout.completed
       )
       
+      // If no workout for yesterday either, streak is 0
       if (!hasYesterdayWorkout) {
-        // If no workout for today or yesterday, streak is broken
-        return 0
+        setCurrentStreak(0)
+        return
       }
     }
     
-    // Count consecutive days with completed workouts
+    // Calculate streak by checking consecutive days
     let currentDate = new Date(today)
-    let checkingDate = hasTodayWorkout ? today : new Date(today.setDate(today.getDate() - 1))
+    let dateStr = currentDate.toISOString().split('T')[0]
     
+    // If today's workout is completed, include it in the streak
+    if (hasTodayWorkout) {
+      streak = 1
+      currentDate.setDate(currentDate.getDate() - 1)
+      dateStr = currentDate.toISOString().split('T')[0]
+    }
+    
+    // Check previous days
     while (true) {
-      const dateStr = checkingDate.toISOString().split('T')[0]
-      const hasCompletedWorkout = sortedWorkouts.some(workout => 
-        workout.date === dateStr && workout.completed
+      const workoutForDate = sortedHistory.find(
+        (workout) => workout.date === dateStr
       )
       
-      if (hasCompletedWorkout) {
+      if (workoutForDate && workoutForDate.completed) {
         streak++
-        checkingDate.setDate(checkingDate.getDate() - 1)
+        currentDate.setDate(currentDate.getDate() - 1)
+        dateStr = currentDate.toISOString().split('T')[0]
       } else {
         break
       }
     }
     
-    return streak
+    setCurrentStreak(streak)
   }
   
-  // Update streak when datedWorkouts changes
-  useEffect(() => {
-    if (datedWorkouts.length > 0) {
-      const streak = calculateStreak()
-      setCurrentStreak(streak)
-    }
-  }, [datedWorkouts])
-
+  // Workout interaction functions
   const toggleExercise = (exerciseIndex: number) => {
-    const updatedWorkoutPlan = { ...workoutPlan }
-    updatedWorkoutPlan.exercises[exerciseIndex].completed = !updatedWorkoutPlan.exercises[exerciseIndex].completed
-    setWorkoutPlan(updatedWorkoutPlan)
+    if (!currentDatedWorkout || !currentDatedWorkout.workout || !currentDatedWorkout.workout.exercises || 
+        exerciseIndex < 0 || exerciseIndex >= currentDatedWorkout.workout.exercises.length) {
+      console.error("Cannot toggle exercise: Invalid data or index");
+      return;
+    }
     
-    // Update current dated workout
-    updateCurrentDatedWorkout(updatedWorkoutPlan)
+    const updatedWorkout = { ...currentDatedWorkout }
+    updatedWorkout.workout.exercises[exerciseIndex].completed = 
+      !updatedWorkout.workout.exercises[exerciseIndex].completed
     
-    // Auto-save when toggling exercises
-    autoSaveWorkoutProgress(updatedWorkoutPlan)
+    // Check if all exercises are completed
+    const allCompleted = updatedWorkout.workout.exercises.every(
+      (exercise) => exercise.completed
+    )
+    updatedWorkout.completed = allCompleted
     
-    // Check if all exercises are now completed
-    const allCompleted = updatedWorkoutPlan.exercises.every(ex => ex.completed)
-    if (allCompleted) {
-      // Recalculate streak
-      const newStreak = calculateStreak()
-      setCurrentStreak(newStreak)
-      
-      // Show completion dialog
+    // If all exercises are completed and it wasn't completed before, show completion dialog
+    if (allCompleted && !currentDatedWorkout.completed) {
       setShowCompletionDialog(true)
     }
+    
+    setCurrentDatedWorkout(updatedWorkout)
+    updateCurrentDatedWorkout(updatedWorkout.workout)
   }
-
+  
   const updateReps = (exerciseIndex: number, value: number) => {
-    const updatedWorkoutPlan = { ...workoutPlan }
-    updatedWorkoutPlan.exercises[exerciseIndex].reps = value
-    setWorkoutPlan(updatedWorkoutPlan)
+    if (!currentDatedWorkout || !currentDatedWorkout.workout || !currentDatedWorkout.workout.exercises || 
+        exerciseIndex < 0 || exerciseIndex >= currentDatedWorkout.workout.exercises.length) {
+      console.error("Cannot update reps: Invalid data or index");
+      return;
+    }
     
-    // Update current dated workout
-    updateCurrentDatedWorkout(updatedWorkoutPlan)
+    const updatedWorkout = { ...currentDatedWorkout }
+    updatedWorkout.workout.exercises[exerciseIndex].reps = value
     
-    // Auto-save when updating reps
-    autoSaveWorkoutProgress(updatedWorkoutPlan)
+    setCurrentDatedWorkout(updatedWorkout)
+    updateCurrentDatedWorkout(updatedWorkout.workout)
   }
-
+  
   const incrementReps = (exerciseIndex: number) => {
-    const updatedWorkoutPlan = { ...workoutPlan }
-    updatedWorkoutPlan.exercises[exerciseIndex].reps += 1
-    setWorkoutPlan(updatedWorkoutPlan)
+    if (!currentDatedWorkout || !currentDatedWorkout.workout || !currentDatedWorkout.workout.exercises || 
+        exerciseIndex < 0 || exerciseIndex >= currentDatedWorkout.workout.exercises.length) {
+      console.error("Cannot increment reps: Invalid data or index");
+      return;
+    }
     
-    // Update current dated workout
-    updateCurrentDatedWorkout(updatedWorkoutPlan)
+    const updatedWorkout = { ...currentDatedWorkout }
+    updatedWorkout.workout.exercises[exerciseIndex].reps += 1
     
-    // Auto-save when incrementing reps
-    autoSaveWorkoutProgress(updatedWorkoutPlan)
+    setCurrentDatedWorkout(updatedWorkout)
+    updateCurrentDatedWorkout(updatedWorkout.workout)
   }
-
+  
   const decrementReps = (exerciseIndex: number) => {
-    const updatedWorkoutPlan = { ...workoutPlan }
-    const currentReps = updatedWorkoutPlan.exercises[exerciseIndex].reps
-    if (currentReps > 0) {
-      updatedWorkoutPlan.exercises[exerciseIndex].reps -= 1
-      setWorkoutPlan(updatedWorkoutPlan)
-      
-      // Update current dated workout
-      updateCurrentDatedWorkout(updatedWorkoutPlan)
-      
-      // Auto-save when decrementing reps
-      autoSaveWorkoutProgress(updatedWorkoutPlan)
+    if (!currentDatedWorkout || !currentDatedWorkout.workout || !currentDatedWorkout.workout.exercises || 
+        exerciseIndex < 0 || exerciseIndex >= currentDatedWorkout.workout.exercises.length || 
+        currentDatedWorkout.workout.exercises[exerciseIndex].reps <= 0) {
+      console.error("Cannot decrement reps: Invalid data, index, or already at 0");
+      return;
     }
+    
+    const updatedWorkout = { ...currentDatedWorkout }
+    updatedWorkout.workout.exercises[exerciseIndex].reps -= 1
+    
+    setCurrentDatedWorkout(updatedWorkout)
+    updateCurrentDatedWorkout(updatedWorkout.workout)
   }
   
-  // Update the current dated workout
+  // Update functions
   const updateCurrentDatedWorkout = (workout: WorkoutDay) => {
-    const dateString = currentDate.toISOString().split('T')[0]
-    const updatedDatedWorkouts = [...datedWorkouts]
-    
-    // Find the index of the current dated workout
-    const dayIndex = updatedDatedWorkouts.findIndex(day => day.date === dateString)
-    
-    if (dayIndex >= 0) {
-      // Update existing day
-      updatedDatedWorkouts[dayIndex].workout = workout
-      
-      // Check if all exercises are completed
-      const allCompleted = workout.exercises.every(exercise => exercise.completed)
-      
-      updatedDatedWorkouts[dayIndex].completed = allCompleted
-    } else {
-      // Add new day
-      updatedDatedWorkouts.push({
-        date: dateString,
-        workout: workout,
-        completed: false
-      })
+    if (!currentDatedWorkout || !workout || !workout.exercises) {
+      console.error("Cannot update workout: Invalid data");
+      return;
     }
     
-    setDatedWorkouts(updatedDatedWorkouts)
-    safeSetItem("datedWorkouts", updatedDatedWorkouts)
-  }
-  
-  // Auto-save function
-  const autoSaveWorkoutProgress = (workout: WorkoutDay) => {
+    // Check if all exercises are completed
+    const allCompleted = workout.exercises.every((exercise) => exercise.completed)
+    
+    const updatedDatedWorkout: DatedWorkout = {
+      ...currentDatedWorkout,
+      workout,
+      completed: allCompleted,
+    }
+    
     // Update workout history
     updateWorkoutHistory(workout)
     
-    // Show sync indicator
-    showSyncIndicator()
-    
-    // Update last saved time
-    setLastSaved(new Date())
+    // Auto-save progress
+    autoSaveWorkoutProgress(workout)
   }
   
-  // Function to update workout history
-  const updateWorkoutHistory = (workout: WorkoutDay) => {
-    const today = currentDate.toISOString().split('T')[0]
-    const existingHistory = safeGetItem<any[]>("workoutHistory", [])
-    
-    // Only save exercises with reps > 0
-    const exercisesToSave: any[] = []
-    
-    workout.exercises.forEach(exercise => {
-      if (exercise.reps > 0) {
-        // Check if this exercise already has an entry for today
-        const existingEntry = existingHistory.find(entry => 
-          entry.date === today && entry.exerciseName === exercise.name
-        )
-        
-        if (!existingEntry) {
-          exercisesToSave.push({
-            date: today,
-            exerciseName: exercise.name,
-            reps: exercise.reps
-          })
-        } else if (existingEntry.reps !== exercise.reps) {
-          // Update existing entry if reps have changed
-          existingEntry.reps = exercise.reps
-        }
-      }
-    })
-    
-    if (exercisesToSave.length > 0 || existingHistory.some(entry => entry.date === today)) {
-      const updatedHistory = [...existingHistory.filter(entry => entry.date !== today), 
-        ...exercisesToSave, 
-        ...existingHistory.filter(entry => 
-          entry.date === today && !exercisesToSave.some(e => e.exerciseName === entry.exerciseName)
-        )
-      ]
-      
-      safeSetItem("workoutHistory", updatedHistory)
+  const autoSaveWorkoutProgress = (workout: WorkoutDay) => {
+    if (!currentDatedWorkout || !workout || !workout.exercises) {
+      console.error("Cannot save workout progress: Invalid data");
+      return;
     }
+    
+    const updatedHistory = [...workoutHistory]
+    const existingIndex = updatedHistory.findIndex(
+      (item) => item.date === currentDatedWorkout.date
+    )
+    
+    // Check if all exercises are completed
+    const allCompleted = workout.exercises.every((exercise) => exercise.completed)
+    
+    if (existingIndex >= 0) {
+      updatedHistory[existingIndex] = {
+        ...updatedHistory[existingIndex],
+        workout,
+        completed: allCompleted,
+      }
+    } else {
+      updatedHistory.push({
+        date: currentDatedWorkout.date,
+        workout,
+        completed: allCompleted,
+      })
+    }
+    
+    safeSetItem("workoutHistory", updatedHistory)
+    setLastSaved(new Date())
+    showSyncIndicator()
   }
-
+  
+  const updateWorkoutHistory = (workout: WorkoutDay) => {
+    if (!currentDatedWorkout || !workout || !workout.exercises) {
+      console.error("Cannot update workout history: Invalid data");
+      return;
+    }
+    
+    const updatedHistory = [...workoutHistory]
+    const existingIndex = updatedHistory.findIndex(
+      (item) => item.date === currentDatedWorkout.date
+    )
+    
+    // Check if all exercises are completed
+    const allCompleted = workout.exercises.every((exercise) => exercise.completed)
+    
+    if (existingIndex >= 0) {
+      updatedHistory[existingIndex] = {
+        ...updatedHistory[existingIndex],
+        workout,
+        completed: allCompleted,
+      }
+    } else {
+      updatedHistory.push({
+        date: currentDatedWorkout.date,
+        workout,
+        completed: allCompleted,
+      })
+    }
+    
+    setWorkoutHistory(updatedHistory)
+  }
+  
   const saveProgress = () => {
+    if (!currentDatedWorkout) {
+      toast({
+        title: "No Workout Available",
+        description: "There is no workout to save for this date.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setIsSaving(true)
+    
     try {
-      setIsSaving(true)
+      // Save workout history to localStorage
+      safeSetItem("workoutHistory", workoutHistory)
       
-      // Update current dated workout
-      updateCurrentDatedWorkout(workoutPlan)
-      
-      // Update workout history
-      updateWorkoutHistory(workoutPlan)
+      // Update last saved timestamp
+      setLastSaved(new Date())
       
       // Show sync indicator
       showSyncIndicator()
       
-      // Update last saved time
-      setLastSaved(new Date())
-      
+      // Show success toast
       toast({
-        title: "Progress saved",
+        title: "Progress Saved",
         description: "Your workout progress has been saved successfully.",
       })
       
-      setTimeout(() => {
-        setIsSaving(false)
-      }, 1000)
+      // Recalculate streak
+      calculateStreak()
     } catch (error) {
-      console.error("Error saving workout data:", error)
+      console.error("Error saving progress:", error);
+      // Show error toast
       toast({
-        title: "Error saving progress",
-        description: "There was a problem saving your data. Please try again.",
-        variant: "destructive"
+        title: "Error Saving Progress",
+        description: "There was an error saving your progress. Please try again.",
+        variant: "destructive",
       })
+    } finally {
       setIsSaving(false)
     }
   }
-
+  
   const resetDay = () => {
-    const updatedWorkoutPlan = { ...workoutPlan }
-    updatedWorkoutPlan.exercises.forEach((exercise) => {
-      exercise.completed = false
-      exercise.reps = 0
-    })
-    setWorkoutPlan(updatedWorkoutPlan)
+    // Get the day of the week (0-6, where 0 is Sunday)
+    const dayIndex = currentDate.getDay()
+    // Adjust to make Monday index 0 (for workout plans that start on Monday)
+    const adjustedDayIndex = dayIndex === 0 ? 6 : dayIndex - 1
     
-    // Update current dated workout
-    updateCurrentDatedWorkout(updatedWorkoutPlan)
+    // Create a new workout day based on the current plan
+    const dateString = currentDate.toISOString().split('T')[0]
+    createNewWorkoutDay(dateString, adjustedDayIndex)
     
-    // Auto-save when resetting day
-    autoSaveWorkoutProgress(updatedWorkoutPlan)
+    // Update workout history if there was an existing workout
+    const updatedHistory = workoutHistory.filter(
+      (workout) => workout.date !== dateString
+    )
     
+    setWorkoutHistory(updatedHistory)
+    safeSetItem("workoutHistory", updatedHistory)
+    
+    // Show success toast
     toast({
-      title: "Day reset",
-      description: "All exercises have been reset.",
+      title: "Day Reset",
+      description: "Your workout for today has been reset.",
     })
-  }
-
-  // Calculate completion percentage for the current day
-  const getDayCompletionPercentage = () => {
-    if (workoutPlan.exercises.length === 0) return 0
-    
-    const completedExercises = workoutPlan.exercises.filter(ex => ex.completed).length
-    return Math.round((completedExercises / workoutPlan.exercises.length) * 100)
   }
   
-  // Check if a date has a workout
+  // Helper functions for UI
+  const getDayCompletionPercentage = () => {
+    if (!currentDatedWorkout) return 0
+    
+    const totalExercises = currentDatedWorkout.workout.exercises.length
+    const completedExercises = currentDatedWorkout.workout.exercises.filter(
+      (exercise) => exercise.completed
+    ).length
+    
+    return Math.round((completedExercises / totalExercises) * 100)
+  }
+  
   const hasWorkout = (date: Date) => {
     const dateString = date.toISOString().split('T')[0]
-    return datedWorkouts.some(day => day.date === dateString)
+    return workoutHistory.some((workout) => workout.date === dateString)
   }
   
-  // Check if a date's workout is completed
   const isWorkoutCompleted = (date: Date) => {
     const dateString = date.toISOString().split('T')[0]
-    const workoutDay = datedWorkouts.find(day => day.date === dateString)
-    return workoutDay?.completed || false
+    const workout = workoutHistory.find((workout) => workout.date === dateString)
+    return workout ? workout.completed : false
   }
-
-  // Get dates for the current week
+  
   const getWeekDates = () => {
-    const currentWeekStart = startOfWeek(currentDate, { weekStartsOn: 1 }) // Monday as start of week
+    const startDate = startOfWeek(currentDate, { weekStartsOn: 1 }) // Start on Monday
     const weekDates = []
     
     for (let i = 0; i < 7; i++) {
-      const date = new Date(currentWeekStart)
+      const date = new Date(startDate)
       date.setDate(date.getDate() + i)
       weekDates.push(date)
     }
     
     return weekDates
   }
-
+  
+  // Render the workout page
   return (
     <MobileLayout>
-      <div className="container max-w-md mx-auto px-3 py-4">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center">
-            <h1 className="text-xl font-bold">Workout Plan</h1>
-            {currentStreak > 0 && (
-              <div className="ml-2 flex items-center bg-orange-100 dark:bg-orange-950/20 text-orange-600 dark:text-orange-400 rounded-full px-2 py-0.5">
-                <span className="text-xs font-medium">🔥 {currentStreak} day{currentStreak !== 1 ? 's' : ''}</span>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center space-x-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setShowHelpDialog(true)}
-            >
-              <HelpCircle className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8"
-              onClick={() => setShowWeeklyView(!showWeeklyView)}
-            >
-              <Calendar className="h-4 w-4 mr-1" />
-              {showWeeklyView ? "Day" : "Week"}
-            </Button>
-            <Link href="/workout/history">
-              <Button variant="outline" size="sm" className="h-8">
-                <History className="h-4 w-4 mr-1" />
-                History
+      <div className="container px-2 sm:px-4 mx-auto pt-4 pb-6">
+        <div className="mb-4">
+          <h1 className="text-2xl font-bold mb-4">Workout Tracker</h1>
+          
+          <div className="flex flex-col space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <PlanSelector
+                type="workout"
+                currentPlanId={currentWorkoutPlanId}
+                availablePlans={availableWorkoutPlans}
+                onPlanChange={changeWorkoutPlan}
+              />
+              <PlanImport onImport={importPlans} />
+              <PlanExport 
+                workoutPlans={availableWorkoutPlans} 
+                dietPlans={[]} 
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowHelpDialog(true)}
+                className="h-9 w-9 p-0"
+              >
+                <HelpCircle className="h-5 w-5" />
               </Button>
-            </Link>
-            <Button 
-              onClick={saveProgress} 
-              variant="ghost" 
-              size="icon" 
-              className="h-8 w-8 relative"
-              disabled={isSaving}
-            >
-              {isSaving ? (
-                <RefreshCw className="h-4 w-4 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4" />
-              )}
-              {lastSaved && !isSaving && (
-                <span className="absolute -bottom-4 right-0 text-[10px] text-muted-foreground">
-                  {format(lastSaved, 'HH:mm')}
-                </span>
-              )}
-            </Button>
+            </div>
           </div>
         </div>
         
-        {/* Day navigation */}
-        <Card className="mb-4 shadow-sm">
-          <CardContent className="py-3 px-4">
-            <div className="flex items-center justify-between">
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                className="h-8 w-8" 
-                onClick={goToPreviousDay}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              
-              <div className="text-center">
-                <p className="text-sm font-medium">{formatCurrentDate(currentDate)}</p>
-                <p className="text-xs">{workoutPlan.name}</p>
-                {isWorkoutCompleted(currentDate) && (
-                  <p className="text-xs text-green-500">Completed</p>
-                )}
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center space-x-1">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={goToPreviousDay}
+                  className="h-7 w-7"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant={isToday(currentDate) ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => navigateToDate(new Date())}
+                  className="h-7 px-2 text-xs"
+                >
+                  Today
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={goToNextDay}
+                  className="h-7 w-7"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
               </div>
               
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                className="h-8 w-8" 
-                onClick={goToNextDay}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
+              <div className="flex items-center space-x-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowWeeklyView(!showWeeklyView)}
+                  className="h-7 px-2 text-xs"
+                >
+                  <Calendar className="h-3 w-3 mr-1" />
+                  {showWeeklyView ? "Hide" : "Show"} Calendar
+                </Button>
+                <Link href="/workout/history">
+                  <Button variant="ghost" size="sm" className="h-7 px-2 text-xs">
+                    <History className="h-3 w-3 mr-1" />
+                    History
+                  </Button>
+                </Link>
+              </div>
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Weekly view */}
-        {showWeeklyView && (
-          <Card className="mb-4 shadow-sm">
-            <CardHeader className="py-3 px-4">
-              <CardTitle className="text-sm">Weekly Progress</CardTitle>
-            </CardHeader>
-            <CardContent className="py-2 px-4">
-              <div className="grid grid-cols-7 gap-1">
+            
+            <CardTitle className="text-base mt-2">
+              {formatCurrentDate(currentDate)}
+            </CardTitle>
+          </CardHeader>
+          
+          {showWeeklyView && (
+            <CardContent className="pb-2">
+              <div className="flex justify-between px-2 space-x-1">
                 {getWeekDates().map((date, index) => {
-                  const isWorkoutDay = hasWorkout(date)
-                  const isCompleted = isWorkoutCompleted(date)
-                  const isCurrentDay = isSameDay(date, currentDate)
-                  
+                  const formattedDate = format(date, "d");
+                  const dayName = format(date, "EEE").substring(0, 1);
+                  const isCurrentDate = isSameDay(date, currentDate);
+                  const workoutExists = hasWorkout(date);
+                  const workoutCompleted = isWorkoutCompleted(date);
+
                   return (
-                    <div 
+                    <div
                       key={index}
+                      className={cn(
+                        "flex flex-col items-center justify-center min-w-[36px] cursor-pointer rounded-md py-1",
+                        isCurrentDate
+                          ? "bg-primary text-primary-foreground"
+                          : workoutExists
+                          ? "bg-muted"
+                          : "hover:bg-muted"
+                      )}
                       onClick={() => navigateToDate(date)}
-                      className={`flex flex-col items-center justify-center p-1 rounded-md cursor-pointer transition-all ${
-                        isCurrentDay 
-                          ? "bg-primary/10 border border-primary" 
-                          : isCompleted 
-                            ? "bg-green-50 dark:bg-green-950/20" 
-                            : isWorkoutDay 
-                              ? "bg-muted/50" 
-                              : ""
-                      }`}
                     >
-                      <span className="text-xs font-medium">{format(date, 'EEE')}</span>
-                      <span className={`text-xs ${isToday(date) ? "font-bold" : ""}`}>
-                        {format(date, 'd')}
-                      </span>
-                      {isCompleted && (
-                        <Check className="h-3 w-3 text-green-500 mt-1" />
+                      <div className="text-[10px] font-medium">{dayName}</div>
+                      <div className="text-xs font-bold">{formattedDate}</div>
+                      {workoutExists && (
+                        <div className="mt-0.5">
+                          {workoutCompleted ? (
+                            <CheckCircle className="h-2.5 w-2.5 text-green-500" />
+                          ) : (
+                            <Circle className="h-2.5 w-2.5 text-gray-400" />
+                          )}
+                        </div>
                       )}
                     </div>
-                  )
+                  );
                 })}
               </div>
             </CardContent>
-          </Card>
-        )}
-
-        <Card className="mb-4 shadow-sm">
-          <CardHeader className="py-3 px-4">
-            <CardTitle className="text-base">Muscle Growth & Fat Loss</CardTitle>
-          </CardHeader>
-          <CardContent className="py-2 px-4">
-            <div className="flex flex-wrap gap-2 text-xs">
-              <div className="bg-muted rounded-full px-2 py-1">✅ 6-day split</div>
-              <div className="bg-muted rounded-full px-2 py-1">✅ Core for abs</div>
-              <div className="bg-muted rounded-full px-2 py-1">✅ Progressive overload</div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="shadow-sm">
-          <CardHeader className="py-3 px-4">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm">{workoutPlan.name}</CardTitle>
-              <Button variant="outline" size="sm" onClick={resetDay} className="h-7 text-xs">
-                Reset
-              </Button>
-            </div>
-            <div className="w-full bg-muted/50 rounded-full h-2 mt-2">
-              <div 
-                className="bg-primary h-2 rounded-full" 
-                style={{ width: `${getDayCompletionPercentage()}%` }}
-              ></div>
-            </div>
-          </CardHeader>
-          <CardContent className="p-3">
-            <div className="space-y-3">
-              {workoutPlan.exercises.map((exercise, exerciseIndex) => (
-                <div 
-                  key={exerciseIndex} 
-                  className={`flex flex-col p-2 rounded-md transition-all duration-300 ${
-                    exercise.completed 
-                      ? "bg-green-50 dark:bg-green-950/20 border-l-2 border-green-500" 
-                      : "hover:bg-muted/50"
-                  }`}
-                >
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id={`exercise-${exerciseIndex}`}
-                      checked={exercise.completed}
-                      onCheckedChange={() => toggleExercise(exerciseIndex)}
-                      className={`h-5 w-5 ${
-                        exercise.completed 
-                          ? "border-green-500 bg-green-500 text-primary-foreground" 
-                          : ""
-                      }`}
-                    />
-                    <div className="flex-grow">
-                      <div className="flex items-center">
-                        <label
-                          htmlFor={`exercise-${exerciseIndex}`}
-                          className={`flex-grow cursor-pointer text-sm transition-all duration-300 ${
-                            exercise.completed 
-                              ? "line-through text-muted-foreground" 
-                              : ""
-                          }`}
-                        >
-                          {exercise.name}
-                        </label>
-                        
-                        {exercise.tooltip && (
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button variant="ghost" size="icon" className="h-6 w-6 ml-1">
-                                  <Info className="h-3 w-3 text-muted-foreground" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent className="max-w-[200px] p-2">
-                                <p className="text-xs">{exercise.tooltip}</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        )}
-                      </div>
-                      <p className="text-xs text-muted-foreground">{exercise.sets}</p>
-                    </div>
+          )}
+          
+          <CardContent>
+            {currentDatedWorkout ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-base font-semibold">
+                    {currentDatedWorkout.workout.name}
+                  </h2>
+                  <div className="flex items-center space-x-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={resetDay}
+                      className="h-7 px-2 text-xs"
+                    >
+                      <RefreshCw className="h-3 w-3 mr-1" />
+                      Reset
+                    </Button>
+                    <Button
+                      onClick={saveProgress}
+                      disabled={isSaving}
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                    >
+                      <Save className="h-3 w-3 mr-1" />
+                      Save
+                    </Button>
                   </div>
-                  
-                  <div className="flex items-center mt-2 ml-7">
-                    <div className="flex items-center space-x-2">
-                      <Button 
-                        variant="outline" 
-                        size="icon" 
-                        className="h-6 w-6" 
-                        onClick={() => decrementReps(exerciseIndex)}
-                        disabled={exercise.reps === 0}
-                      >
-                        <Minus className="h-3 w-3" />
-                      </Button>
-                      
-                      <div className="w-12 text-center">
-                        <span className={`text-xs font-medium ${
-                          exercise.reps > 0 ? "text-primary" : "text-muted-foreground"
-                        }`}>
-                          {exercise.reps} reps
+                </div>
+                
+                <div className="space-y-2">
+                  {currentDatedWorkout.workout.exercises.map((exercise, index) => (
+                    <div
+                      key={index}
+                      className={`p-2 rounded-lg border ${
+                        exercise.completed
+                          ? "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-900"
+                          : "bg-card border-border"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-start space-x-2">
+                          <Checkbox
+                            checked={exercise.completed}
+                            onCheckedChange={() => toggleExercise(index)}
+                            className="mt-0.5"
+                          />
+                          <div>
+                            <div className="flex items-center">
+                              <h3 className="text-sm font-medium">{exercise.name}</h3>
+                              {exercise.tooltip && (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Info className="h-3 w-3 ml-1 text-muted-foreground" />
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-xs">
+                                      {exercise.tooltip}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {exercise.sets}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-1">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => decrementReps(index)}
+                            disabled={exercise.reps <= 0}
+                          >
+                            <Minus className="h-3 w-3" />
+                          </Button>
+                          <Input
+                            type="number"
+                            value={exercise.reps}
+                            onChange={(e) =>
+                              updateReps(index, parseInt(e.target.value) || 0)
+                            }
+                            className="w-12 h-6 text-center text-xs"
+                          />
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => incrementReps(index)}
+                          >
+                            <Plus className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                
+                {currentDatedWorkout.workout.exercises.length > 0 && (
+                  <div className="mt-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-medium">
+                        Completion: {getDayCompletionPercentage()}%
+                      </span>
+                      <div className="flex items-center space-x-1">
+                        <Trophy className="h-3 w-3 text-yellow-500" />
+                        <span className="text-xs font-medium">
+                          Streak: {currentStreak} day{currentStreak !== 1 ? "s" : ""}
                         </span>
                       </div>
-                      
-                      <Button 
-                        variant="outline" 
-                        size="icon" 
-                        className="h-6 w-6" 
-                        onClick={() => incrementReps(exerciseIndex)}
-                      >
-                        <Plus className="h-3 w-3" />
-                      </Button>
+                    </div>
+                    <div className="w-full bg-muted rounded-full h-2">
+                      <div
+                        className="bg-primary h-2 rounded-full"
+                        style={{ width: `${getDayCompletionPercentage()}%` }}
+                      ></div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                )}
+                
+                {currentDatedWorkout.completed && (
+                  <div className="mt-3 p-2 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-900 flex items-center justify-between">
+                    <div className="flex items-center">
+                      <Check className="h-4 w-4 text-green-500 mr-1.5" />
+                      <span className="text-sm font-medium">Workout completed!</span>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={moveToNextWeek}
+                      className="h-7 px-2 text-xs gap-1"
+                    >
+                      Next Week
+                      <ArrowRight className="h-3 w-3" />
+                    </Button>
+                  </div>
+                )}
+                
+                {lastSaved && (
+                  <p className="text-[10px] text-muted-foreground text-center mt-2">
+                    Last saved: {format(lastSaved, "h:mm a")}
+                    <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-green-500" id="sync-indicator"></span>
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="py-8 text-center">
+                <p className="text-muted-foreground">No workout available for this date.</p>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={resetDay} 
+                  className="mt-4"
+                >
+                  <RefreshCw className="h-3 w-3 mr-1" />
+                  Create Workout
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
-
-        {/* Add sync indicator */}
-        <div className="fixed bottom-20 right-4">
-          <div className="bg-green-500 text-white rounded-full p-1 shadow-lg opacity-0 scale-75 transform transition-all duration-300" id="sync-indicator">
-            <Check className="h-4 w-4" />
-          </div>
-        </div>
-        
-        {/* Next Week Dialog */}
-        <Dialog open={showNextWeekDialog} onOpenChange={setShowNextWeekDialog}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Move to Next Week?</DialogTitle>
-              <DialogDescription>
-                You're about to move to the next week. Your current progress will be saved.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="py-4">
-              <p className="text-sm">
-                Moving to the next week will create a new workout plan starting with Day 1.
-                All your historical data will be preserved.
-              </p>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowNextWeekDialog(false)}>
-                Cancel
-              </Button>
-              <Button onClick={moveToNextWeek}>
-                <ArrowRight className="h-4 w-4 mr-2" />
-                Continue to Next Week
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* Workout Completion Dialog */}
-        <Dialog open={showCompletionDialog} onOpenChange={setShowCompletionDialog}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle className="text-center">Workout Completed! 🎉</DialogTitle>
-              <DialogDescription className="text-center">
-                Great job completing today's workout!
-              </DialogDescription>
-            </DialogHeader>
-            <div className="flex flex-col items-center justify-center py-6">
-              <div className="bg-primary/10 p-4 rounded-full mb-4">
-                <Trophy className="h-12 w-12 text-primary" />
-              </div>
-              <p className="text-center text-sm mb-4">
-                You've completed all exercises for {workoutPlan.name}
-              </p>
-              
-              {currentStreak > 0 && (
-                <div className="bg-orange-100 dark:bg-orange-950/20 text-orange-600 dark:text-orange-400 rounded-full px-3 py-1 mb-4">
-                  <p className="text-sm font-medium">🔥 {currentStreak} day streak!</p>
-                </div>
-              )}
-              
-              <p className="text-center text-xs text-muted-foreground">
-                Keep up the good work! Consistency is key to achieving your fitness goals.
-              </p>
-            </div>
-            <DialogFooter>
-              <Button onClick={() => setShowCompletionDialog(false)} className="w-full">
-                Continue
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* Help Dialog */}
-        <Dialog open={showHelpDialog} onOpenChange={setShowHelpDialog}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle>How to Use Workout Tracking</DialogTitle>
-              <DialogDescription>
-                Get the most out of your workout tracking experience
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-2">
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium">Daily Tracking</h3>
-                <p className="text-sm text-muted-foreground">
-                  Use the day navigation at the top to move between workout days. 
-                  Each day has a specific workout focus.
-                </p>
-              </div>
-              
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium">Tracking Exercises</h3>
-                <p className="text-sm text-muted-foreground">
-                  Check off exercises as you complete them. Use the + and - buttons to 
-                  track your reps for each exercise.
-                </p>
-              </div>
-              
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium">Weekly View</h3>
-                <p className="text-sm text-muted-foreground">
-                  Toggle the Week button to see your progress across the entire week. 
-                  Click on any day to jump to that workout.
-                </p>
-              </div>
-              
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium">Auto-Saving</h3>
-                <p className="text-sm text-muted-foreground">
-                  Your progress is automatically saved as you track exercises. 
-                  You can also manually save using the save button.
-                </p>
-              </div>
-              
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium">Weekly Progression</h3>
-                <p className="text-sm text-muted-foreground">
-                  At the end of each week, you'll be prompted to move to the next week. 
-                  All your historical data is preserved.
-                </p>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button onClick={() => setShowHelpDialog(false)}>
-                Got it
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </div>
+      
+      {/* Help Dialog */}
+      <Dialog open={showHelpDialog} onOpenChange={setShowHelpDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Workout Tracker Help</DialogTitle>
+            <DialogDescription>
+              Learn how to use the workout tracker effectively.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <h3 className="font-medium">Tracking Your Workouts</h3>
+              <p className="text-sm text-muted-foreground">
+                Each day shows exercises based on your selected workout plan. Check off exercises as you complete them and track your reps.
+              </p>
+            </div>
+            <div>
+              <h3 className="font-medium">Changing Your Plan</h3>
+              <p className="text-sm text-muted-foreground">
+                You can change your workout plan at any time using the "Change Plan" button. Your progress for each plan is saved separately.
+              </p>
+            </div>
+            <div>
+              <h3 className="font-medium">Saving Progress</h3>
+              <p className="text-sm text-muted-foreground">
+                Your progress is automatically saved as you make changes, but you can also manually save using the Save button.
+              </p>
+            </div>
+            <div>
+              <h3 className="font-medium">Streaks</h3>
+              <p className="text-sm text-muted-foreground">
+                Build a streak by completing workouts on consecutive days. Don't break the chain!
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setShowHelpDialog(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Completion Dialog */}
+      <Dialog open={showCompletionDialog} onOpenChange={setShowCompletionDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Workout Completed!</DialogTitle>
+            <DialogDescription>
+              Great job completing today's workout!
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 flex flex-col items-center justify-center">
+            <div className="bg-green-100 dark:bg-green-900/30 p-4 rounded-full mb-4">
+              <Trophy className="h-12 w-12 text-yellow-500" />
+            </div>
+            <p className="text-center font-medium">
+              You've completed all exercises for today's workout.
+            </p>
+            <p className="text-center text-sm text-muted-foreground mt-2">
+              Current streak: {currentStreak} day{currentStreak !== 1 ? "s" : ""}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCompletionDialog(false)}>
+              Close
+            </Button>
+            <Button onClick={() => {
+              setShowCompletionDialog(false)
+              moveToNextWeek()
+            }}>
+              Plan Next Week
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </MobileLayout>
   )
 }
