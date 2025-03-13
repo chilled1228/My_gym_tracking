@@ -10,8 +10,8 @@ interface MobileLayoutProps {
 
 export function MobileLayout({ children }: MobileLayoutProps) {
   return (
-    <div className="flex flex-col h-full">
-      <main className="flex-1 overflow-y-auto overflow-x-hidden pb-20 overscroll-behavior-y-contain px-2 sm:px-4 md:px-6 safe-area-inset-bottom">
+    <div className="flex flex-col min-h-[100dvh] h-full">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden pb-20 overscroll-behavior-contain px-2 sm:px-4 md:px-6 safe-area-inset-bottom">
         <PageTransition mode="popLayout">
           {children}
         </PageTransition>

@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Save, PieChart, Calendar, ChevronLeft, ChevronRight, Check, ArrowRight, Trash2, Utensils } from "lucide-react"
+import { Save, PieChart, Calendar, ChevronLeft, ChevronRight, Check, ArrowRight, Trash2, Utensils, RotateCcw, MoreHorizontal, AlertTriangle } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -27,6 +27,12 @@ import {
   DialogTrigger,
   DialogFooter,
 } from "@/components/ui/dialog"
+import { 
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 interface DailyMacros {
   date: string
@@ -58,7 +64,9 @@ function DietPageContent() {
     currentDietPlanId, 
     changeDietPlan,
     importPlans,
-    deleteAllDietPlans
+    deleteAllDietPlans,
+    checkPlanDisplayConsistency,
+    emergencyResetAndReload
   } = usePlanManager()
   
   // State for tracking the current date and diet
@@ -68,6 +76,12 @@ function DietPageContent() {
   const [isSaving, setIsSaving] = useState(false)
   const [lastSaved, setLastSaved] = useState<Date | null>(null)
   const [showWeeklyView, setShowWeeklyView] = useState(false)
+  
+  // Check plan display consistency on mount
+  useEffect(() => {
+    // Ensure the diet plan is displayed correctly
+    checkPlanDisplayConsistency();
+  }, [checkPlanDisplayConsistency]);
   
   // Load diet history on mount
   useEffect(() => {
@@ -81,6 +95,15 @@ function DietPageContent() {
       setActiveTab(tabParam)
     }
   }, [tabParam])
+  
+  // Force refresh macroHistory data when the page loads
+  useEffect(() => {
+    // If we have a current diet day, force refresh the macroHistory data
+    if (currentDietDay && currentDietDay.meals) {
+      // Force save the daily macros to ensure dashboard is updated immediately
+      saveDailyMacrosForDashboard(currentDietDay.meals, currentDietDay.date)
+    }
+  }, [currentDietDay])
   
   // Update current diet when date changes or diet plan changes
   useEffect(() => {
@@ -100,20 +123,119 @@ function DietPageContent() {
   // Create a new diet day for the current date
   const createNewDietDay = (dateString: string) => {
     // Make sure we have a valid diet plan
-    if (!currentDietPlan || !currentDietPlan.meals) {
-      console.error("Cannot create diet day: current diet plan is invalid", currentDietPlan)
+    if (!currentDietPlan) {
+      console.error("Cannot create diet day: current diet plan is undefined")
+      toast({
+        title: "Error",
+        description: "No diet plan available. Please select a plan.",
+        variant: "destructive",
+      })
       return
     }
     
     try {
+      // Check if the current diet plan has meals
+      if (!currentDietPlan.meals || !Array.isArray(currentDietPlan.meals) || currentDietPlan.meals.length === 0) {
+        console.error("Cannot create diet day: current diet plan has no meals", currentDietPlan)
+        
+        // Create a default meal if none exists
+        const defaultMeals = [
+          {
+            name: "Breakfast",
+            time: "8:00 AM",
+            calories: 0,
+            protein: 0,
+            carbs: 0,
+            fats: 0,
+            items: [
+              {
+                name: "Add your breakfast items",
+                completed: false,
+                calories: 0,
+                protein: 0,
+                carbs: 0,
+                fats: 0
+              }
+            ]
+          },
+          {
+            name: "Lunch",
+            time: "12:00 PM",
+            calories: 0,
+            protein: 0,
+            carbs: 0,
+            fats: 0,
+            items: [
+              {
+                name: "Add your lunch items",
+                completed: false,
+                calories: 0,
+                protein: 0,
+                carbs: 0,
+                fats: 0
+              }
+            ]
+          },
+          {
+            name: "Dinner",
+            time: "6:00 PM",
+            calories: 0,
+            protein: 0,
+            carbs: 0,
+            fats: 0,
+            items: [
+              {
+                name: "Add your dinner items",
+                completed: false,
+                calories: 0,
+                protein: 0,
+                carbs: 0,
+                fats: 0
+              }
+            ]
+          }
+        ]
+        
+        const newDietDay: DietDay = {
+          date: dateString,
+          meals: defaultMeals,
+          completed: false,
+        }
+        
+        setCurrentDietDay(newDietDay)
+        
+        // Save the default meals to history
+        updateDietHistory(defaultMeals, dateString)
+        autoSaveDietProgress(defaultMeals, dateString)
+        
+        toast({
+          title: "Default Meals Created",
+          description: "Your diet plan didn't have any meals, so we created some default ones for you.",
+        })
+        
+        return
+      }
+      
       // Deep clone the meals from the current diet plan
       const meals = JSON.parse(JSON.stringify(currentDietPlan.meals))
       
       // Ensure each meal has the required properties
       const validatedMeals = meals.map((meal: Meal) => {
         // Ensure meal has items array
-        if (!meal.items) {
+        if (!meal.items || !Array.isArray(meal.items)) {
           meal.items = []
+        }
+        
+        // If meal has no items, add a placeholder item
+        if (meal.items.length === 0) {
+          meal.items.push({
+            name: `Add your ${meal.name.toLowerCase()} items`,
+            completed: false,
+            calories: 0,
+            protein: 0,
+            carbs: 0,
+            fats: 0
+          })
         }
         
         // Ensure each meal item has the required properties
@@ -138,6 +260,10 @@ function DietPageContent() {
       }
       
       setCurrentDietDay(newDietDay)
+      
+      // Save the new diet day to history
+      updateDietHistory(validatedMeals, dateString)
+      autoSaveDietProgress(validatedMeals, dateString)
     } catch (error) {
       console.error("Error creating new diet day:", error)
       
@@ -149,6 +275,12 @@ function DietPageContent() {
       }
       
       setCurrentDietDay(emptyDietDay)
+      
+      toast({
+        title: "Error Creating Diet Day",
+        description: "There was an error creating your diet day. Please try again or select a different plan.",
+        variant: "destructive",
+      })
     }
   }
   
@@ -190,164 +322,378 @@ function DietPageContent() {
   const toggleMealItem = (mealIndex: number, itemIndex: number) => {
     if (!currentDietDay) return
     
-    // Add defensive checks
-    if (!currentDietDay.meals || 
-        !currentDietDay.meals[mealIndex] || 
-        !currentDietDay.meals[mealIndex].items || 
-        !currentDietDay.meals[mealIndex].items[itemIndex]) {
-      console.error("Attempted to toggle a meal item that doesn't exist:", { mealIndex, itemIndex })
+    const updatedMeals = [...currentDietDay.meals]
+    if (!updatedMeals[mealIndex] || !updatedMeals[mealIndex].items) {
+      console.error("Invalid meal or items array")
       return
     }
     
-    const updatedDietDay = { ...currentDietDay }
-    updatedDietDay.meals[mealIndex].items[itemIndex].completed = 
-      !updatedDietDay.meals[mealIndex].items[itemIndex].completed
+    // Toggle the completed status
+    updatedMeals[mealIndex].items[itemIndex].completed = !updatedMeals[mealIndex].items[itemIndex].completed
     
     // Check if all meal items are completed
-    const allCompleted = updatedDietDay.meals.every(meal => 
+    const allCompleted = updatedMeals.every(meal => 
       meal.items && meal.items.every(item => item.completed)
     )
-    updatedDietDay.completed = allCompleted
+    
+    // Update the current diet day
+    const updatedDietDay: DietDay = {
+      ...currentDietDay,
+      meals: updatedMeals,
+      completed: allCompleted
+    }
     
     setCurrentDietDay(updatedDietDay)
-    updateCurrentDietDay(updatedDietDay.meals)
+    
+    // Update diet history with the meals array
+    updateDietHistory(updatedMeals, currentDietDay.date)
+    
+    // Force save the daily macros immediately to ensure dashboard shows latest data
+    saveDailyMacrosForDashboard(updatedMeals, currentDietDay.date)
   }
   
   // Update functions
   const updateCurrentDietDay = (meals: Meal[]) => {
-    if (!currentDietDay || !meals) return
+    if (!currentDietDay) {
+      console.error("Cannot update current diet day: currentDietDay is null");
+      return;
+    }
+    
+    if (!meals || !Array.isArray(meals)) {
+      console.error("Cannot update current diet day: meals is not an array");
+      return;
+    }
+    
+    // Validate meals to ensure they have the required properties
+    const validatedMeals = meals.map(meal => {
+      // Ensure meal has items array
+      if (!meal.items || !Array.isArray(meal.items)) {
+        return { ...meal, items: [] };
+      }
+      return meal;
+    });
     
     // Check if all meal items are completed
-    const allCompleted = meals.every(meal => 
-      meal.items && meal.items.every(item => item.completed)
-    )
+    const allCompleted = validatedMeals.every(meal => 
+      meal.items && meal.items.length > 0 && meal.items.every(item => item.completed)
+    );
     
     const updatedDietDay: DietDay = {
       ...currentDietDay,
-      meals,
+      meals: validatedMeals,
       completed: allCompleted,
-    }
+    };
     
     // Update diet history
-    updateDietHistory(meals)
+    updateDietHistory(validatedMeals, currentDietDay.date);
     
     // Auto-save progress
-    autoSaveDietProgress(meals)
+    autoSaveDietProgress(validatedMeals, currentDietDay.date);
+    
+    // Update current diet day
+    setCurrentDietDay(updatedDietDay);
   }
   
-  const updateDietHistory = (meals: Meal[]) => {
-    if (!currentDietDay || !meals) return
+  const updateDietHistory = (meals: Meal[], dateOverride?: string) => {
+    // Use dateOverride if provided, otherwise try to get date from currentDietDay
+    const dateString = dateOverride || (currentDietDay ? currentDietDay.date : null);
     
-    const updatedHistory = [...dietHistory]
+    if (!dateString) {
+      console.error("Cannot update diet history: no date available");
+      return;
+    }
+    
+    if (!meals || !Array.isArray(meals)) {
+      console.error("Cannot update diet history: meals is not an array");
+      return;
+    }
+    
+    // Validate meals to ensure they have the required properties
+    const validatedMeals = meals.map(meal => {
+      // Ensure meal has items array
+      if (!meal.items || !Array.isArray(meal.items)) {
+        return { ...meal, items: [] };
+      }
+      return meal;
+    });
+    
+    const updatedHistory = [...dietHistory];
     const existingIndex = updatedHistory.findIndex(
-      (item) => item.date === currentDietDay.date
-    )
+      (item) => item && item.date === dateString
+    );
     
     // Check if all meal items are completed
-    const allCompleted = meals.every(meal => 
-      meal.items && meal.items.every(item => item.completed)
-    )
+    const allCompleted = validatedMeals.every(meal => 
+      meal.items && meal.items.length > 0 && meal.items.every(item => item.completed)
+    );
     
     if (existingIndex >= 0) {
       updatedHistory[existingIndex] = {
         ...updatedHistory[existingIndex],
-        meals,
+        meals: validatedMeals,
         completed: allCompleted,
-      }
+      };
     } else {
       updatedHistory.push({
-        date: currentDietDay.date,
-        meals,
+        date: dateString,
+        meals: validatedMeals,
         completed: allCompleted,
-      })
+      });
     }
     
-    setDietHistory(updatedHistory)
+    setDietHistory(updatedHistory);
   }
   
-  const autoSaveDietProgress = (meals: Meal[]) => {
-    if (!currentDietDay || !meals) return
+  const autoSaveDietProgress = (meals: Meal[], dateOverride?: string) => {
+    // Use dateOverride if provided, otherwise try to get date from currentDietDay
+    const dateString = dateOverride || (currentDietDay ? currentDietDay.date : null);
     
-    const updatedHistory = [...dietHistory]
-    const existingIndex = updatedHistory.findIndex(
-      (item) => item.date === currentDietDay.date
-    )
-    
-    // Check if all meal items are completed
-    const allCompleted = meals.every(meal => 
-      meal.items && meal.items.every(item => item.completed)
-    )
-    
-    if (existingIndex >= 0) {
-      updatedHistory[existingIndex] = {
-        ...updatedHistory[existingIndex],
-        meals,
-        completed: allCompleted,
-      }
-    } else {
-      updatedHistory.push({
-        date: currentDietDay.date,
-        meals,
-        completed: allCompleted,
-      })
+    if (!dateString) {
+      console.error("Cannot auto-save diet progress: no date available");
+      return;
     }
     
-    safeSetItem("dietHistory", updatedHistory)
-    setLastSaved(new Date())
-    showSyncIndicator()
+    if (!meals || !Array.isArray(meals)) {
+      console.error("Cannot auto-save diet progress: meals is not an array");
+      return;
+    }
+    
+    // Validate meals to ensure they have the required properties
+    const validatedMeals = meals.map(meal => {
+      // Ensure meal has items array
+      if (!meal.items || !Array.isArray(meal.items)) {
+        return { ...meal, items: [] };
+      }
+      return meal;
+    });
+    
+    // Get a copy of the current diet history
+    const updatedHistory = [...dietHistory];
+    const existingIndex = updatedHistory.findIndex(
+      (item) => item && item.date === dateString
+    );
+    
+    // Check if all meal items are completed
+    const allCompleted = validatedMeals.every(meal => 
+      meal.items && meal.items.length > 0 && meal.items.every(item => item.completed)
+    );
+    
+    // Create a new diet day or update existing one
+    let newDietHistory: DietDay[];
+    
+    if (existingIndex >= 0) {
+      // Update existing entry
+      newDietHistory = updatedHistory.map(item => 
+        item.date === dateString 
+          ? { ...item, meals: validatedMeals, completed: allCompleted }
+          : item
+      );
+    } else {
+      // Add new entry
+      newDietHistory = [
+        ...updatedHistory,
+        {
+          date: dateString,
+          meals: validatedMeals,
+          completed: allCompleted,
+        }
+      ];
+    }
+    
+    // Save with data cleanup options
+    safeSetItem("dietHistory", newDietHistory, {
+      maxItems: 90, // Keep data for last 90 days
+      maxAge: 90,   // Remove entries older than 90 days
+      validateFn: (item) => {
+        // Validate that the item has all required properties
+        return item && 
+               typeof item.date === 'string' && 
+               Array.isArray(item.meals) &&
+               typeof item.completed === 'boolean';
+      }
+    });
+    
+    // Update state with the new history
+    setDietHistory(newDietHistory);
+    
+    // Save daily macros for dashboard
+    saveDailyMacrosForDashboard(validatedMeals, dateString);
+    
+    setLastSaved(new Date());
+    showSyncIndicator();
+  }
+  
+  // Save daily macros for dashboard
+  const saveDailyMacrosForDashboard = (meals: Meal[], dateString: string) => {
+    if (!meals || !Array.isArray(meals)) {
+      console.error("Cannot save daily macros: meals is not an array")
+      return
+    }
+    
+    // Validate meals to ensure they have the required properties
+    const validatedMeals = meals.map(meal => {
+      // Ensure meal has items array
+      if (!meal.items || !Array.isArray(meal.items)) {
+        return { ...meal, items: [] }
+      }
+      return meal
+    })
+    
+    // Calculate total macros for the day - only count completed items
+    const totalCalories = validatedMeals.reduce(
+      (sum, meal) => sum + meal.items.reduce(
+        (mealSum, item) => mealSum + (item.completed ? (item.calories || 0) : 0), 0
+      ), 0
+    )
+    
+    const totalProtein = validatedMeals.reduce(
+      (sum, meal) => sum + meal.items.reduce(
+        (mealSum, item) => mealSum + (item.completed ? (item.protein || 0) : 0), 0
+      ), 0
+    )
+    
+    const totalCarbs = validatedMeals.reduce(
+      (sum, meal) => sum + meal.items.reduce(
+        (mealSum, item) => mealSum + (item.completed ? (item.carbs || 0) : 0), 0
+      ), 0
+    )
+    
+    const totalFats = validatedMeals.reduce(
+      (sum, meal) => sum + meal.items.reduce(
+        (mealSum, item) => mealSum + (item.completed ? (item.fats || 0) : 0), 0
+      ), 0
+    )
+    
+    // Create daily macros object
+    const dailyMacros: DailyMacros = {
+      date: dateString,
+      calories: Math.round(totalCalories),
+      protein: Math.round(totalProtein),
+      carbs: Math.round(totalCarbs),
+      fats: Math.round(totalFats)
+    }
+    
+    // Get existing macro history
+    const macroHistory = safeGetItem<DailyMacros[]>("macroHistory", [])
+    
+    // Find if we already have an entry for this date
+    const existingIndex = macroHistory.findIndex(item => item.date === dateString)
+    
+    // Create a new array with updated data
+    let updatedMacroHistory: DailyMacros[];
+    
+    if (existingIndex >= 0) {
+      // Update existing entry
+      updatedMacroHistory = macroHistory.map(item => 
+        item.date === dateString ? dailyMacros : item
+      );
+    } else {
+      // Add new entry
+      updatedMacroHistory = [...macroHistory, dailyMacros];
+    }
+    
+    // Save updated history with data cleanup options
+    safeSetItem("macroHistory", updatedMacroHistory, {
+      maxItems: 90, // Keep data for last 90 days
+      maxAge: 90,   // Remove entries older than 90 days
+      validateFn: (item) => {
+        // Validate that the item has all required properties
+        return item && 
+               typeof item.date === 'string' && 
+               typeof item.calories === 'number' &&
+               typeof item.protein === 'number' &&
+               typeof item.carbs === 'number' &&
+               typeof item.fats === 'number';
+      }
+    });
+    
+    console.log("Saved daily macros for dashboard:", dailyMacros);
   }
   
   const saveProgress = () => {
-    if (!currentDietDay) return
+    if (!currentDietDay) {
+      toast({
+        title: "No Diet Plan Available",
+        description: "There is no diet plan to save for this date.",
+        variant: "destructive",
+      });
+      return;
+    }
     
-    setIsSaving(true)
+    setIsSaving(true);
     
     try {
-      // Save diet history to localStorage
-      safeSetItem("dietHistory", dietHistory)
+      // Save diet history to localStorage with data cleanup
+      safeSetItem("dietHistory", dietHistory, {
+        maxItems: 90, // Keep data for last 90 days
+        maxAge: 90,   // Remove entries older than 90 days
+        validateFn: (item) => {
+          // Validate that the item has all required properties
+          return item && 
+                 typeof item.date === 'string' && 
+                 Array.isArray(item.meals) &&
+                 typeof item.completed === 'boolean';
+        }
+      });
       
       // Update last saved timestamp
-      setLastSaved(new Date())
+      setLastSaved(new Date());
       
       // Show sync indicator
-      showSyncIndicator()
+      showSyncIndicator();
       
       // Show success toast
       toast({
         title: "Progress Saved",
         description: "Your diet progress has been saved successfully.",
-      })
+      });
     } catch (error) {
+      console.error("Error saving progress:", error);
       // Show error toast
       toast({
         title: "Error Saving Progress",
         description: "There was an error saving your progress. Please try again.",
         variant: "destructive",
-      })
+      });
     } finally {
-      setIsSaving(false)
+      setIsSaving(false);
     }
   }
   
   const resetDay = () => {
-    if (!currentDietDay) return
-    
     // Create a new diet day based on the current plan
     const dateString = currentDate.toISOString().split('T')[0]
     createNewDietDay(dateString)
     
-    // Update diet history
+    // Update diet history by removing the entry for the current date
     const updatedHistory = dietHistory.filter(
       (diet) => diet.date !== dateString
     )
     
+    // Update macro history by removing the entry for the current date
+    const macroHistory = safeGetItem<DailyMacros[]>("macroHistory", [])
+    const updatedMacroHistory = macroHistory.filter(
+      (macro) => macro.date !== dateString
+    )
+    
+    // Save updated histories with data cleanup
+    safeSetItem("dietHistory", updatedHistory, {
+      maxItems: 90, // Keep data for last 90 days
+      maxAge: 90,   // Remove entries older than 90 days
+    });
+    
+    safeSetItem("macroHistory", updatedMacroHistory, {
+      maxItems: 90, // Keep data for last 90 days
+      maxAge: 90,   // Remove entries older than 90 days
+    });
+    
+    // Update state
     setDietHistory(updatedHistory)
-    safeSetItem("dietHistory", updatedHistory)
     
     // Show success toast
     toast({
       title: "Day Reset",
-      description: "Your diet for today has been reset.",
+      description: "Your diet for today has been reset to the plan default.",
     })
   }
   
@@ -478,27 +824,34 @@ function DietPageContent() {
   
   // Add a function to handle deleting all diet plans with confirmation
   const handleDeleteAllDietPlans = () => {
-    if (confirm("Are you sure you want to delete all diet plans? This will remove all custom diet plans and reset to the default plans. This action cannot be undone.")) {
+    if (confirm("Are you sure you want to delete all diet plans? This will remove all diet plans and clear all diet history. This action cannot be undone.")) {
       // Delete all diet plans
       deleteAllDietPlans()
       
-      // Clear the diet history for the current day
-      const dateString = currentDate.toISOString().split('T')[0]
-      const updatedHistory = dietHistory.filter(
-        (diet) => diet.date !== dateString
-      )
-      setDietHistory(updatedHistory)
-      safeSetItem("dietHistory", updatedHistory)
+      // Clear the diet history completely
+      setDietHistory([])
+      safeSetItem("dietHistory", [], {
+        replaceExisting: true
+      })
       
-      // Force refresh of the current diet day with the default plan
-      setTimeout(() => {
-        createNewDietDay(dateString)
-      }, 100)
+      // Clear the current diet day
+      setCurrentDietDay(null)
+      safeSetItem("currentDietDay", null)
+      
+      // Clear macro history
+      safeSetItem("macroHistory", [], {
+        replaceExisting: true
+      })
       
       toast({
         title: "Diet Plans Deleted",
-        description: "All custom diet plans have been deleted. Default plans have been restored.",
+        description: "All diet plans and history have been deleted. The page will reload to apply changes.",
       })
+      
+      // Force a page reload after a short delay to ensure everything is reset
+      setTimeout(() => {
+        window.location.reload()
+      }, 1500)
     }
   }
   
@@ -507,7 +860,50 @@ function DietPageContent() {
     <MobileLayout>
       <div className="container px-2 sm:px-4 mx-auto pt-4 pb-6">
         <div className="mb-4">
-          <h1 className="text-2xl font-bold mb-4">Diet Tracker</h1>
+          <div className="flex justify-between items-center mb-4">
+            <h1 className="text-2xl font-bold">Diet Tracking</h1>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => checkPlanDisplayConsistency()}
+                className="gap-2"
+              >
+                <RotateCcw className="h-4 w-4" />
+                Refresh Plan
+              </Button>
+              
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem 
+                    onClick={() => {
+                      const dateString = currentDate.toISOString().split('T')[0]
+                      createNewDietDay(dateString)
+                      toast({
+                        title: "Day Reset",
+                        description: "Diet day has been reset to the plan default.",
+                      })
+                    }}
+                  >
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Reset Day
+                  </DropdownMenuItem>
+                  <DropdownMenuItem 
+                    onClick={emergencyResetAndReload}
+                    className="text-red-500 focus:text-red-500"
+                  >
+                    <AlertTriangle className="h-4 w-4 mr-2" />
+                    Emergency Reset
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
           
           <div className="flex flex-col space-y-3">
             <div className="flex flex-wrap gap-2">

@@ -39,6 +39,12 @@ interface DailyMacros {
   fats: number
 }
 
+interface DietDay {
+  date: string
+  meals: Meal[]
+  completed: boolean
+}
+
 export default function Home() {
   const [workoutCompletion, setWorkoutCompletion] = useState(0)
   const [dietCompletion, setDietCompletion] = useState(0)
@@ -49,8 +55,8 @@ export default function Home() {
   })
   const [macroHistory, setMacroHistory] = useState<DailyMacros[]>([])
   
-  // Load saved data from localStorage on component mount
-  useEffect(() => {
+  // Function to load data from localStorage
+  const loadData = () => {
     try {
       // Get workout completion
       const workoutPlan = safeGetItem<WorkoutDay[]>("workoutPlan", [])
@@ -63,36 +69,115 @@ export default function Home() {
         setWorkoutCompletion(totalExercises > 0 ? Math.round((completedExercises / totalExercises) * 100) : 0)
       }
       
-      // Get diet completion
-      const mealPlan = safeGetItem<Meal[]>("mealPlan", [])
-      if (mealPlan.length > 0) {
-        const totalItems = mealPlan.reduce((sum: number, meal: Meal) => sum + meal.items.length, 0)
-        const completedItems = mealPlan.reduce(
-          (sum: number, meal: Meal) => sum + meal.items.filter(item => item.completed).length, 
-          0
-        )
-        setDietCompletion(totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0)
-        
-        // Calculate calories
-        const totalCalories = mealPlan.reduce((sum: number, meal: Meal) => 
-          sum + meal.items.reduce((mealSum: number, item: MealItem) => mealSum + item.calories, 0), 0)
-        
-        const consumedCalories = mealPlan.reduce((sum: number, meal: Meal) => 
-          sum + meal.items.reduce((mealSum: number, item: MealItem) => 
-            mealSum + (item.completed ? item.calories : 0), 0), 0)
+      // Get macro history
+      const history = safeGetItem<DailyMacros[]>("macroHistory", [])
+      
+      // Filter out any invalid entries
+      const validHistory = history.filter(item => 
+        item && typeof item === 'object' && item.date && 
+        typeof item.calories === 'number' && 
+        typeof item.protein === 'number' && 
+        typeof item.carbs === 'number' && 
+        typeof item.fats === 'number'
+      )
+      
+      // Sort by date (newest first) to ensure we get the most recent data
+      const sortedHistory = [...validHistory].sort((a, b) => 
+        new Date(b.date).getTime() - new Date(a.date).getTime()
+      )
+      
+      setMacroHistory(sortedHistory)
+      
+      // Get today's date in YYYY-MM-DD format
+      const today = new Date().toISOString().split('T')[0]
+      console.log("Today's date:", today)
+      
+      // Find today's macros in the sorted history
+      const todaysMacros = sortedHistory.find(item => item.date === today)
+      console.log("Found today's macros:", todaysMacros)
+      
+      if (todaysMacros) {
+        // Get target calories from current diet plan if available
+        const currentDietPlan = safeGetItem<{targetCalories?: number}>("currentDietPlan", {targetCalories: 2000})
+        const targetCalories = currentDietPlan && typeof currentDietPlan.targetCalories === 'number' ? 
+          currentDietPlan.targetCalories : 2000 // Default target
         
         setCalorieStats({
-          consumed: Math.round(consumedCalories),
-          total: totalCalories,
-          percentage: totalCalories > 0 ? Math.round((consumedCalories / totalCalories) * 100) : 0
+          consumed: Math.round(todaysMacros.calories),
+          total: targetCalories,
+          percentage: targetCalories > 0 ? Math.min(100, Math.round((todaysMacros.calories / targetCalories) * 100)) : 0
         })
+      } else {
+        // No data for today, check diet history
+        const dietHistory = safeGetItem<DietDay[]>("dietHistory", [])
+        if (Array.isArray(dietHistory) && dietHistory.length > 0) {
+          const todaysDiet = dietHistory.find((item) => item && item.date === today)
+          if (todaysDiet && todaysDiet.meals && Array.isArray(todaysDiet.meals)) {
+            // Calculate calories from diet history
+            const totalCalories = todaysDiet.meals.reduce((sum, meal) => 
+              sum + (meal.items ? meal.items.reduce((mealSum, item) => mealSum + (item.calories || 0), 0) : 0), 0)
+            
+            const consumedCalories = todaysDiet.meals.reduce((sum, meal) => 
+              sum + (meal.items ? meal.items.reduce((mealSum, item) => 
+                mealSum + (item.completed ? (item.calories || 0) : 0), 0) : 0), 0)
+            
+            // Get target calories from current diet plan if available
+            const currentDietPlan = safeGetItem<{targetCalories?: number}>("currentDietPlan", {targetCalories: 2000})
+            const targetCalories = currentDietPlan && typeof currentDietPlan.targetCalories === 'number' ? 
+              currentDietPlan.targetCalories : 2000 // Default target
+            
+            setCalorieStats({
+              consumed: Math.round(consumedCalories),
+              total: targetCalories,
+              percentage: targetCalories > 0 ? Math.min(100, Math.round((consumedCalories / targetCalories) * 100)) : 0
+            })
+          }
+        }
       }
       
-      // Get macro history
-      const history = safeGetItem<DailyMacros[]>("dietHistory", [])
-      setMacroHistory(history)
+      // Get diet history for completion percentage
+      const dietHistory = safeGetItem<DietDay[]>("dietHistory", [])
+      if (Array.isArray(dietHistory) && dietHistory.length > 0) {
+        const todaysDiet = dietHistory.find((item) => item && item.date === today)
+        if (todaysDiet && todaysDiet.meals && Array.isArray(todaysDiet.meals)) {
+          const totalItems = todaysDiet.meals.reduce(
+            (sum: number, meal: Meal) => sum + (meal.items && Array.isArray(meal.items) ? meal.items.length : 0), 0
+          )
+          const completedItems = todaysDiet.meals.reduce(
+            (sum: number, meal: Meal) => sum + (meal.items && Array.isArray(meal.items) ? 
+              meal.items.filter((item: MealItem) => item.completed).length : 0), 0
+          )
+          setDietCompletion(totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0)
+        }
+      }
+      
     } catch (error) {
       console.error("Error loading data from localStorage:", error)
+    }
+  }
+  
+  // Load data on mount
+  useEffect(() => {
+    loadData()
+    
+    // Set up refresh interval (every 30 seconds)
+    const refreshInterval = setInterval(() => {
+      loadData()
+    }, 30000)
+    
+    // Set up visibility change listener to refresh data when page becomes visible
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadData()
+      }
+    }
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    
+    // Clean up
+    return () => {
+      clearInterval(refreshInterval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [])
   
@@ -101,17 +186,13 @@ export default function Home() {
   const options = { weekday: 'long', month: 'short', day: 'numeric' } as const
   const formattedDate = today.toLocaleDateString('en-US', options)
   
-  // Get last 3 days of macro data
+  // Get recent macro data (including today)
   const getRecentMacros = () => {
     if (macroHistory.length === 0) return []
     
-    const todayStr = today.toISOString().split('T')[0]
-    const recentDays = macroHistory
-      .filter(day => day.date !== todayStr) // Exclude today
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) // Sort by date descending
-      .slice(0, 3) // Get last 3 days
-    
-    return recentDays
+    // macroHistory is already sorted by date (newest first)
+    // Just take the first 3 entries
+    return macroHistory.slice(0, 3)
   }
   
   const recentMacros = getRecentMacros()
@@ -242,22 +323,54 @@ export default function Home() {
                 ></div>
               </div>
               
-              {hasHistory && (
-                <div className="bg-muted/30 rounded-lg p-4">
-                  <p className="text-xs font-medium mb-3 flex items-center">
-                    <TrendingUp className="h-3.5 w-3.5 mr-2 text-primary" />
-                    Recent Macro History
-                  </p>
-                  <div className="space-y-3">
-                    {recentMacros.map((day, index) => (
-                      <div key={index} className="flex justify-between items-center text-xs">
-                        <span className="font-medium">{new Date(day.date).toLocaleDateString('en-US', { weekday: 'short' })}</span>
-                        <span className="text-muted-foreground">{day.calories} kcal / {day.protein}g protein</span>
-                      </div>
-                    ))}
-                  </div>
+              {/* Recent Macro History */}
+              <div className="col-span-12 md:col-span-6 lg:col-span-4 bg-card rounded-lg p-4 shadow">
+                <h3 className="text-lg font-semibold mb-3">Recent Macro History</h3>
+                <div className="space-y-3">
+                  {getRecentMacros().length > 0 ? (
+                    getRecentMacros().map((day, index) => {
+                      // Check if this is today's date
+                      const isToday = day.date === new Date().toISOString().split('T')[0]
+                      
+                      return (
+                        <div key={index} className="flex justify-between items-center">
+                          <div>
+                            <p className="font-medium">
+                              {isToday ? (
+                                <span className="text-primary font-bold">Today</span>
+                              ) : (
+                                new Date(day.date).toLocaleDateString('en-US', {
+                                  weekday: 'long',
+                                  month: 'short',
+                                  day: 'numeric'
+                                })
+                              )}
+                            </p>
+                            <p className="text-sm text-muted-foreground">
+                              {Math.round(day.calories)} cal · {Math.round(day.protein)}g protein
+                            </p>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <div className="w-16 h-2 bg-muted rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-primary rounded-full" 
+                                style={{ 
+                                  width: `${Math.min(100, Math.round((day.calories / (calorieStats.total || 2000)) * 100))}%` 
+                                }}
+                              />
+                            </div>
+                            <span className="text-sm font-medium">
+                              {Math.min(100, Math.round((day.calories / (calorieStats.total || 2000)) * 100))}%
+                            </span>
+                          </div>
+                        </div>
+                      )
+                    })
+                  ) : (
+                    <p className="text-muted-foreground">No recent data available</p>
+                  )}
                 </div>
-              )}
+              </div>
             </CardContent>
           </Card>
         </div>

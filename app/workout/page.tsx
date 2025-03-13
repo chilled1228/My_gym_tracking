@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
-import { Save, Plus, Minus, History, Check, ChevronLeft, ChevronRight, ArrowRight, RefreshCw, Calendar, HelpCircle, Trophy, Info, CheckCircle, Circle } from "lucide-react"
+import { Save, Plus, Minus, History, Check, ChevronLeft, ChevronRight, ArrowRight, RefreshCw, Calendar, HelpCircle, Trophy, Info, CheckCircle, Circle, Dumbbell, BarChart, CalendarDays, MoreHorizontal, RotateCcw, AlertTriangle, Trash2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { MobileLayout } from "@/components/mobile-layout"
 import { safeGetItem, safeSetItem } from "@/lib/utils"
@@ -33,6 +33,14 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
+import { Progress } from "@/components/ui/progress"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 // New interface for tracking workouts by date
 interface DatedWorkout {
@@ -57,13 +65,22 @@ export default function WorkoutPage() {
     availableWorkoutPlans, 
     currentWorkoutPlanId, 
     changeWorkoutPlan,
-    importPlans
+    importPlans,
+    checkPlanDisplayConsistency,
+    emergencyResetAndReload,
+    deleteAllWorkoutPlans
   } = usePlanManager()
   
   // State for tracking the current date and workout
   const [currentDate, setCurrentDate] = useState<Date>(new Date())
   const [currentDatedWorkout, setCurrentDatedWorkout] = useState<DatedWorkout | null>(null)
   const [workoutHistory, setWorkoutHistory] = useState<DatedWorkout[]>([])
+  
+  // Check plan display consistency on mount
+  useEffect(() => {
+    // Ensure the workout plan is displayed correctly
+    checkPlanDisplayConsistency();
+  }, [checkPlanDisplayConsistency]);
   
   // Load workout history on mount
   useEffect(() => {
@@ -79,14 +96,17 @@ export default function WorkoutPage() {
   // Update current workout when date changes
   useEffect(() => {
     try {
-      if (!currentWorkoutPlan || !currentWorkoutPlan.days || !currentWorkoutPlan.days.length) {
+      if (!currentWorkoutPlan || 
+          !currentWorkoutPlan.days || 
+          !Array.isArray(currentWorkoutPlan.days) || 
+          !currentWorkoutPlan.days.length) {
         console.warn("No valid workout plan available");
         return;
       }
       
       const dateString = currentDate.toISOString().split('T')[0]
       const existingWorkout = workoutHistory.find(
-        (workout) => workout.date === dateString
+        (workout) => workout && workout.date === dateString
       )
       
       if (existingWorkout) {
@@ -113,7 +133,10 @@ export default function WorkoutPage() {
   // Create a new workout day for the current date
   const createNewWorkoutDay = (dateString: string, dayIndex: number) => {
     // Make sure we have a valid workout plan
-    if (!currentWorkoutPlan || !currentWorkoutPlan.days || !currentWorkoutPlan.days.length) {
+    if (!currentWorkoutPlan || 
+        !currentWorkoutPlan.days || 
+        !Array.isArray(currentWorkoutPlan.days) || 
+        !currentWorkoutPlan.days.length) {
       console.error("No valid workout plan available");
       toast({
         title: "Error",
@@ -123,18 +146,36 @@ export default function WorkoutPage() {
       return;
     }
     
-    // Get the workout day from the current plan based on the day index
-    // If the day index is out of bounds, use the first day
-    const planDayIndex = dayIndex % currentWorkoutPlan.days.length
-    const workoutDay = JSON.parse(JSON.stringify(currentWorkoutPlan.days[planDayIndex]))
-    
-    const newDatedWorkout: DatedWorkout = {
-      date: dateString,
-      workout: workoutDay,
-      completed: false,
+    try {
+      // Get the workout day from the current plan based on the day index
+      // If the day index is out of bounds, use the first day
+      const planDayIndex = dayIndex % currentWorkoutPlan.days.length
+      const workoutDay = JSON.parse(JSON.stringify(currentWorkoutPlan.days[planDayIndex] || currentWorkoutPlan.days[0]))
+      
+      // Ensure the workout day has the required properties
+      if (!workoutDay.exercises) {
+        workoutDay.exercises = []
+      }
+      
+      if (!workoutDay.name) {
+        workoutDay.name = `Day ${planDayIndex + 1}`
+      }
+      
+      const newDatedWorkout: DatedWorkout = {
+        date: dateString,
+        workout: workoutDay,
+        completed: false,
+      }
+      
+      setCurrentDatedWorkout(newDatedWorkout)
+    } catch (error) {
+      console.error("Error creating new workout day:", error)
+      toast({
+        title: "Error",
+        description: "Failed to create a new workout day. Please try again.",
+        variant: "destructive",
+      })
     }
-    
-    setCurrentDatedWorkout(newDatedWorkout)
   }
   
   // Navigation functions
@@ -181,19 +222,30 @@ export default function WorkoutPage() {
   }
   
   const calculateStreak = () => {
+    if (!Array.isArray(workoutHistory) || workoutHistory.length === 0) {
+      setCurrentStreak(0)
+      return
+    }
+    
     let streak = 0
     const today = new Date()
     today.setHours(0, 0, 0, 0)
     
     // Sort history by date (newest first)
     const sortedHistory = [...workoutHistory].sort((a, b) => {
+      if (!a || !a.date || !b || !b.date) return 0
       return new Date(b.date).getTime() - new Date(a.date).getTime()
-    })
+    }).filter(item => item && item.date) // Filter out any invalid entries
+    
+    if (sortedHistory.length === 0) {
+      setCurrentStreak(0)
+      return
+    }
     
     // Check if there's a workout for today
     const todayStr = today.toISOString().split('T')[0]
     const hasTodayWorkout = sortedHistory.some(
-      (workout) => workout.date === todayStr && workout.completed
+      (workout) => workout && workout.date === todayStr && workout.completed
     )
     
     // If no workout for today, check if there's one for yesterday
@@ -203,7 +255,7 @@ export default function WorkoutPage() {
       const yesterdayStr = yesterday.toISOString().split('T')[0]
       
       const hasYesterdayWorkout = sortedHistory.some(
-        (workout) => workout.date === yesterdayStr && workout.completed
+        (workout) => workout && workout.date === yesterdayStr && workout.completed
       )
       
       // If no workout for yesterday either, streak is 0
@@ -227,7 +279,7 @@ export default function WorkoutPage() {
     // Check previous days
     while (true) {
       const workoutForDate = sortedHistory.find(
-        (workout) => workout.date === dateStr
+        (workout) => workout && workout.date === dateStr
       )
       
       if (workoutForDate && workoutForDate.completed) {
@@ -244,8 +296,13 @@ export default function WorkoutPage() {
   
   // Workout interaction functions
   const toggleExercise = (exerciseIndex: number) => {
-    if (!currentDatedWorkout || !currentDatedWorkout.workout || !currentDatedWorkout.workout.exercises || 
-        exerciseIndex < 0 || exerciseIndex >= currentDatedWorkout.workout.exercises.length) {
+    if (!currentDatedWorkout || 
+        !currentDatedWorkout.workout || 
+        !currentDatedWorkout.workout.exercises || 
+        !Array.isArray(currentDatedWorkout.workout.exercises) ||
+        exerciseIndex < 0 || 
+        exerciseIndex >= currentDatedWorkout.workout.exercises.length ||
+        !currentDatedWorkout.workout.exercises[exerciseIndex]) {
       console.error("Cannot toggle exercise: Invalid data or index");
       return;
     }
@@ -256,7 +313,7 @@ export default function WorkoutPage() {
     
     // Check if all exercises are completed
     const allCompleted = updatedWorkout.workout.exercises.every(
-      (exercise) => exercise.completed
+      (exercise) => exercise && exercise.completed
     )
     updatedWorkout.completed = allCompleted
     
@@ -270,8 +327,13 @@ export default function WorkoutPage() {
   }
   
   const updateReps = (exerciseIndex: number, value: number) => {
-    if (!currentDatedWorkout || !currentDatedWorkout.workout || !currentDatedWorkout.workout.exercises || 
-        exerciseIndex < 0 || exerciseIndex >= currentDatedWorkout.workout.exercises.length) {
+    if (!currentDatedWorkout || 
+        !currentDatedWorkout.workout || 
+        !currentDatedWorkout.workout.exercises || 
+        !Array.isArray(currentDatedWorkout.workout.exercises) ||
+        exerciseIndex < 0 || 
+        exerciseIndex >= currentDatedWorkout.workout.exercises.length ||
+        !currentDatedWorkout.workout.exercises[exerciseIndex]) {
       console.error("Cannot update reps: Invalid data or index");
       return;
     }
@@ -284,8 +346,13 @@ export default function WorkoutPage() {
   }
   
   const incrementReps = (exerciseIndex: number) => {
-    if (!currentDatedWorkout || !currentDatedWorkout.workout || !currentDatedWorkout.workout.exercises || 
-        exerciseIndex < 0 || exerciseIndex >= currentDatedWorkout.workout.exercises.length) {
+    if (!currentDatedWorkout || 
+        !currentDatedWorkout.workout || 
+        !currentDatedWorkout.workout.exercises || 
+        !Array.isArray(currentDatedWorkout.workout.exercises) ||
+        exerciseIndex < 0 || 
+        exerciseIndex >= currentDatedWorkout.workout.exercises.length ||
+        !currentDatedWorkout.workout.exercises[exerciseIndex]) {
       console.error("Cannot increment reps: Invalid data or index");
       return;
     }
@@ -298,8 +365,13 @@ export default function WorkoutPage() {
   }
   
   const decrementReps = (exerciseIndex: number) => {
-    if (!currentDatedWorkout || !currentDatedWorkout.workout || !currentDatedWorkout.workout.exercises || 
-        exerciseIndex < 0 || exerciseIndex >= currentDatedWorkout.workout.exercises.length || 
+    if (!currentDatedWorkout || 
+        !currentDatedWorkout.workout || 
+        !currentDatedWorkout.workout.exercises || 
+        !Array.isArray(currentDatedWorkout.workout.exercises) ||
+        exerciseIndex < 0 || 
+        exerciseIndex >= currentDatedWorkout.workout.exercises.length ||
+        !currentDatedWorkout.workout.exercises[exerciseIndex] ||
         currentDatedWorkout.workout.exercises[exerciseIndex].reps <= 0) {
       console.error("Cannot decrement reps: Invalid data, index, or already at 0");
       return;
@@ -314,13 +386,13 @@ export default function WorkoutPage() {
   
   // Update functions
   const updateCurrentDatedWorkout = (workout: WorkoutDay) => {
-    if (!currentDatedWorkout || !workout || !workout.exercises) {
+    if (!currentDatedWorkout || !workout || !workout.exercises || !Array.isArray(workout.exercises)) {
       console.error("Cannot update workout: Invalid data");
       return;
     }
     
     // Check if all exercises are completed
-    const allCompleted = workout.exercises.every((exercise) => exercise.completed)
+    const allCompleted = workout.exercises.every((exercise) => exercise && exercise.completed)
     
     const updatedDatedWorkout: DatedWorkout = {
       ...currentDatedWorkout,
@@ -336,51 +408,76 @@ export default function WorkoutPage() {
   }
   
   const autoSaveWorkoutProgress = (workout: WorkoutDay) => {
-    if (!currentDatedWorkout || !workout || !workout.exercises) {
+    if (!currentDatedWorkout || !workout || !workout.exercises || !Array.isArray(workout.exercises)) {
       console.error("Cannot save workout progress: Invalid data");
       return;
     }
     
-    const updatedHistory = [...workoutHistory]
+    // Create a copy of the current workout history
+    const updatedHistory = [...workoutHistory];
     const existingIndex = updatedHistory.findIndex(
-      (item) => item.date === currentDatedWorkout.date
-    )
+      (item) => item && item.date === currentDatedWorkout.date
+    );
     
     // Check if all exercises are completed
-    const allCompleted = workout.exercises.every((exercise) => exercise.completed)
+    const allCompleted = workout.exercises.every((exercise) => exercise && exercise.completed);
+    
+    // Create a new workout history array
+    let newWorkoutHistory: DatedWorkout[];
     
     if (existingIndex >= 0) {
-      updatedHistory[existingIndex] = {
-        ...updatedHistory[existingIndex],
-        workout,
-        completed: allCompleted,
-      }
+      // Update existing entry
+      newWorkoutHistory = updatedHistory.map(item => 
+        item.date === currentDatedWorkout.date
+          ? { ...item, workout, completed: allCompleted }
+          : item
+      );
     } else {
-      updatedHistory.push({
-        date: currentDatedWorkout.date,
-        workout,
-        completed: allCompleted,
-      })
+      // Add new entry
+      newWorkoutHistory = [
+        ...updatedHistory,
+        {
+          date: currentDatedWorkout.date,
+          workout,
+          completed: allCompleted,
+        }
+      ];
     }
     
-    safeSetItem("workoutHistory", updatedHistory)
-    setLastSaved(new Date())
-    showSyncIndicator()
+    // Save with data cleanup options
+    safeSetItem("workoutHistory", newWorkoutHistory, {
+      maxItems: 90, // Keep data for last 90 days
+      maxAge: 90,   // Remove entries older than 90 days
+      validateFn: (item) => {
+        // Validate that the item has all required properties
+        return item && 
+               typeof item.date === 'string' && 
+               item.workout && 
+               Array.isArray(item.workout.exercises) &&
+               typeof item.completed === 'boolean';
+      }
+    });
+    
+    // Update state
+    setWorkoutHistory(newWorkoutHistory);
+    
+    setLastSaved(new Date());
+    showSyncIndicator();
   }
   
   const updateWorkoutHistory = (workout: WorkoutDay) => {
-    if (!currentDatedWorkout || !workout || !workout.exercises) {
+    if (!currentDatedWorkout || !workout || !workout.exercises || !Array.isArray(workout.exercises)) {
       console.error("Cannot update workout history: Invalid data");
       return;
     }
     
     const updatedHistory = [...workoutHistory]
     const existingIndex = updatedHistory.findIndex(
-      (item) => item.date === currentDatedWorkout.date
+      (item) => item && item.date === currentDatedWorkout.date
     )
     
     // Check if all exercises are completed
-    const allCompleted = workout.exercises.every((exercise) => exercise.completed)
+    const allCompleted = workout.exercises.every((exercise) => exercise && exercise.completed)
     
     if (existingIndex >= 0) {
       updatedHistory[existingIndex] = {
@@ -409,26 +506,37 @@ export default function WorkoutPage() {
       return;
     }
     
-    setIsSaving(true)
+    setIsSaving(true);
     
     try {
-      // Save workout history to localStorage
-      safeSetItem("workoutHistory", workoutHistory)
+      // Save workout history to localStorage with data cleanup
+      safeSetItem("workoutHistory", workoutHistory, {
+        maxItems: 90, // Keep data for last 90 days
+        maxAge: 90,   // Remove entries older than 90 days
+        validateFn: (item) => {
+          // Validate that the item has all required properties
+          return item && 
+                 typeof item.date === 'string' && 
+                 item.workout && 
+                 Array.isArray(item.workout.exercises) &&
+                 typeof item.completed === 'boolean';
+        }
+      });
       
       // Update last saved timestamp
-      setLastSaved(new Date())
+      setLastSaved(new Date());
       
       // Show sync indicator
-      showSyncIndicator()
+      showSyncIndicator();
       
       // Show success toast
       toast({
         title: "Progress Saved",
         description: "Your workout progress has been saved successfully.",
-      })
+      });
       
       // Recalculate streak
-      calculateStreak()
+      calculateStreak();
     } catch (error) {
       console.error("Error saving progress:", error);
       // Show error toast
@@ -436,57 +544,69 @@ export default function WorkoutPage() {
         title: "Error Saving Progress",
         description: "There was an error saving your progress. Please try again.",
         variant: "destructive",
-      })
+      });
     } finally {
-      setIsSaving(false)
+      setIsSaving(false);
     }
   }
   
   const resetDay = () => {
     // Get the day of the week (0-6, where 0 is Sunday)
-    const dayIndex = currentDate.getDay()
+    const dayIndex = currentDate.getDay();
     // Adjust to make Monday index 0 (for workout plans that start on Monday)
-    const adjustedDayIndex = dayIndex === 0 ? 6 : dayIndex - 1
+    const adjustedDayIndex = dayIndex === 0 ? 6 : dayIndex - 1;
     
     // Create a new workout day based on the current plan
-    const dateString = currentDate.toISOString().split('T')[0]
-    createNewWorkoutDay(dateString, adjustedDayIndex)
+    const dateString = currentDate.toISOString().split('T')[0];
+    createNewWorkoutDay(dateString, adjustedDayIndex);
     
-    // Update workout history if there was an existing workout
+    // Update workout history by removing the entry for the current date
     const updatedHistory = workoutHistory.filter(
       (workout) => workout.date !== dateString
-    )
+    );
     
-    setWorkoutHistory(updatedHistory)
-    safeSetItem("workoutHistory", updatedHistory)
+    // Update state
+    setWorkoutHistory(updatedHistory);
+    
+    // Save with data cleanup
+    safeSetItem("workoutHistory", updatedHistory, {
+      maxItems: 90, // Keep data for last 90 days
+      maxAge: 90,   // Remove entries older than 90 days
+    });
     
     // Show success toast
     toast({
       title: "Day Reset",
-      description: "Your workout for today has been reset.",
-    })
+      description: "Your workout for today has been reset to the plan default.",
+    });
   }
   
   // Helper functions for UI
   const getDayCompletionPercentage = () => {
-    if (!currentDatedWorkout) return 0
+    if (!currentDatedWorkout || !currentDatedWorkout.workout || !currentDatedWorkout.workout.exercises || !Array.isArray(currentDatedWorkout.workout.exercises)) return 0
     
     const totalExercises = currentDatedWorkout.workout.exercises.length
+    if (totalExercises === 0) return 0
+    
     const completedExercises = currentDatedWorkout.workout.exercises.filter(
-      (exercise) => exercise.completed
+      (exercise) => exercise && exercise.completed
     ).length
     
     return Math.round((completedExercises / totalExercises) * 100)
   }
   
   const hasWorkout = (date: Date) => {
+    if (!Array.isArray(workoutHistory) || workoutHistory.length === 0) return false
+    
     const dateString = date.toISOString().split('T')[0]
-    return workoutHistory.some((workout) => workout.date === dateString)
+    return workoutHistory.some((workout) => workout && workout.date === dateString)
   }
   
   const isWorkoutCompleted = (date: Date) => {
+    if (!Array.isArray(workoutHistory) || workoutHistory.length === 0) return false
+    
     const dateString = date.toISOString().split('T')[0]
-    const workout = workoutHistory.find((workout) => workout.date === dateString)
+    const workout = workoutHistory.find((workout) => workout && workout.date === dateString)
     return workout ? workout.completed : false
   }
   
@@ -503,39 +623,101 @@ export default function WorkoutPage() {
     return weekDates
   }
   
+  // Add a function to handle deleting all workout plans with confirmation
+  const handleDeleteAllWorkoutPlans = () => {
+    if (confirm("Are you sure you want to delete all workout plans? This will remove all workout plans and clear all workout history. This action cannot be undone.")) {
+      // Delete all workout plans
+      deleteAllWorkoutPlans()
+      
+      // Clear the workout history completely
+      setWorkoutHistory([])
+      safeSetItem("workoutHistory", [], {
+        replaceExisting: true
+      })
+      
+      // Clear workout progress
+      safeSetItem("workoutProgress", {}, {
+        replaceExisting: true
+      })
+      
+      toast({
+        title: "Workout Plans Deleted",
+        description: "All workout plans and history have been deleted. The page will reload to apply changes.",
+      })
+      
+      // Force a page reload after a short delay to ensure everything is reset
+      setTimeout(() => {
+        window.location.reload()
+      }, 1500)
+    }
+  }
+  
   // Render the workout page
   return (
     <MobileLayout>
-      <div className="container px-2 sm:px-4 mx-auto pt-4 pb-6">
-        <div className="mb-4">
-          <h1 className="text-2xl font-bold mb-4">Workout Tracker</h1>
+      <div className="container mx-auto pt-4 pb-6">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Workout Tracking</h1>
+            <p className="text-muted-foreground">
+              {formatCurrentDate(currentDate)}
+            </p>
+          </div>
           
-          <div className="flex flex-col space-y-3">
-            <div className="flex flex-wrap gap-2">
-              <PlanSelector
-                type="workout"
-                currentPlanId={currentWorkoutPlanId}
-                availablePlans={availableWorkoutPlans}
-                onPlanChange={changeWorkoutPlan}
-              />
-              <PlanImport onImport={importPlans} />
-              <PlanExport 
-                workoutPlans={availableWorkoutPlans} 
-                dietPlans={[]} 
-              />
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowHelpDialog(true)}
-                className="h-9 w-9 p-0"
-              >
-                <HelpCircle className="h-5 w-5" />
-              </Button>
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowHelpDialog(true)}
+            >
+              <HelpCircle className="h-4 w-4 mr-2" />
+              Help
+            </Button>
+            
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => checkPlanDisplayConsistency()}
+            >
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh Plan
+            </Button>
+            
+            <PlanImport onImport={importPlans} />
+            
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <MoreHorizontal className="h-4 w-4" />
+                  <span className="sr-only">More</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={resetDay}>
+                  <RotateCcw className="h-4 w-4 mr-2" />
+                  Reset Day
+                </DropdownMenuItem>
+                <DropdownMenuItem 
+                  onClick={handleDeleteAllWorkoutPlans}
+                  className="text-red-500 dark:text-red-400"
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete All Plans
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem 
+                  onClick={emergencyResetAndReload}
+                  className="text-red-500 dark:text-red-400"
+                >
+                  <AlertTriangle className="h-4 w-4 mr-2" />
+                  Emergency Reset
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
         
-        <Card>
+        <Card className="overflow-hidden">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center space-x-1">
@@ -631,11 +813,11 @@ export default function WorkoutPage() {
           )}
           
           <CardContent>
-            {currentDatedWorkout ? (
-              <div className="space-y-3">
+            {currentDatedWorkout && currentDatedWorkout.workout ? (
+              <div className="space-y-3 max-h-[70vh] md:max-h-none overflow-y-auto pb-2">
                 <div className="flex items-center justify-between">
                   <h2 className="text-base font-semibold">
-                    {currentDatedWorkout.workout.name}
+                    {currentDatedWorkout.workout.name || 'Workout'}
                   </h2>
                   <div className="flex items-center space-x-1">
                     <Button
@@ -660,7 +842,8 @@ export default function WorkoutPage() {
                 </div>
                 
                 <div className="space-y-2">
-                  {currentDatedWorkout.workout.exercises.map((exercise, index) => (
+                  {currentDatedWorkout.workout.exercises && Array.isArray(currentDatedWorkout.workout.exercises) && 
+                    currentDatedWorkout.workout.exercises.map((exercise, index) => (
                     <div
                       key={index}
                       className={`p-2 rounded-lg border ${
@@ -678,7 +861,7 @@ export default function WorkoutPage() {
                           />
                           <div>
                             <div className="flex items-center">
-                              <h3 className="text-sm font-medium">{exercise.name}</h3>
+                              <h3 className="text-sm font-medium">{exercise.name || 'Exercise'}</h3>
                               {exercise.tooltip && (
                                 <TooltipProvider>
                                   <Tooltip>
@@ -729,7 +912,9 @@ export default function WorkoutPage() {
                   ))}
                 </div>
                 
-                {currentDatedWorkout.workout.exercises.length > 0 && (
+                {currentDatedWorkout.workout.exercises && 
+                 Array.isArray(currentDatedWorkout.workout.exercises) && 
+                 currentDatedWorkout.workout.exercises.length > 0 && (
                   <div className="mt-3">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs font-medium">

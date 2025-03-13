@@ -41,16 +41,71 @@ export function safeGetItem<T>(key: string, defaultValue: T): T {
 }
 
 /**
- * Safely sets an item in localStorage
+ * Safely sets an item in localStorage with improved error handling and data validation
  * @param key The key to set in localStorage
  * @param value The value to store
+ * @param options Optional configuration for data handling
  * @returns boolean indicating if the operation was successful
  */
-export function safeSetItem<T>(key: string, value: T): boolean {
+export function safeSetItem<T>(
+  key: string, 
+  value: T, 
+  options?: { 
+    maxItems?: number;           // Maximum number of items to keep (for array data)
+    maxAge?: number;             // Maximum age of items in days (for dated data)
+    replaceExisting?: boolean;   // Whether to replace existing data entirely
+    validateFn?: (item: any) => boolean; // Function to validate each item
+  }
+): boolean {
   try {
     if (!isLocalStorageAvailable()) return false;
     
-    localStorage.setItem(key, JSON.stringify(value));
+    // Handle array data with cleanup options
+    if (Array.isArray(value) && options) {
+      let dataToSave = [...value];
+      
+      // Apply validation if provided
+      if (options.validateFn) {
+        dataToSave = dataToSave.filter(item => options.validateFn!(item));
+      }
+      
+      // Apply max age filter if provided
+      if (options.maxAge && options.maxAge > 0) {
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - options.maxAge);
+        
+        dataToSave = dataToSave.filter(item => {
+          // Skip items without date property
+          if (!item || !item.date) return true;
+          
+          try {
+            const itemDate = new Date(item.date);
+            return itemDate >= cutoffDate;
+          } catch (e) {
+            console.warn(`Invalid date format in item: ${JSON.stringify(item)}`);
+            return false;
+          }
+        });
+      }
+      
+      // Apply max items limit if provided
+      if (options.maxItems && options.maxItems > 0 && dataToSave.length > options.maxItems) {
+        // Sort by date if items have date property (newest first)
+        if (dataToSave[0] && dataToSave[0].date) {
+          dataToSave.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        }
+        
+        // Keep only the specified number of items
+        dataToSave = dataToSave.slice(0, options.maxItems);
+      }
+      
+      // Save the cleaned up data
+      localStorage.setItem(key, JSON.stringify(dataToSave));
+    } else {
+      // For non-array data or when no options provided
+      localStorage.setItem(key, JSON.stringify(value));
+    }
+    
     return true;
   } catch (e) {
     console.error(`Error setting item ${key} in localStorage:`, e);

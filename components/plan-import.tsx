@@ -126,9 +126,14 @@ export function PlanImport({ onImport }: PlanImportProps) {
     const validationResult = validateImportedPlans(data)
 
     if (validationResult.isValid) {
-      // Filter based on import type
-      const workoutPlans = importType === "diet" ? undefined : validationResult.workoutPlans
-      const dietPlans = importType === "workout" ? undefined : validationResult.dietPlans
+      // Filter based on import type and take only the first plan if multiple are present
+      const workoutPlans = importType === "diet" ? undefined : 
+        (validationResult.workoutPlans && validationResult.workoutPlans.length > 0 ? 
+          [validationResult.workoutPlans[0]] : undefined);
+      
+      const dietPlans = importType === "workout" ? undefined : 
+        (validationResult.dietPlans && validationResult.dietPlans.length > 0 ? 
+          [validationResult.dietPlans[0]] : undefined);
 
       // Check if we have any plans after filtering
       if ((!workoutPlans || workoutPlans.length === 0) && (!dietPlans || dietPlans.length === 0)) {
@@ -139,9 +144,21 @@ export function PlanImport({ onImport }: PlanImportProps) {
         return
       }
 
+      // Create success message
+      let successMessage = "Successfully parsed import data. ";
+      if (workoutPlans && workoutPlans.length > 0) {
+        const originalCount = validationResult.workoutPlans?.length || 0;
+        successMessage += `Found ${originalCount} workout plan${originalCount !== 1 ? 's' : ''}, using only the first one. `;
+      }
+      
+      if (dietPlans && dietPlans.length > 0) {
+        const originalCount = validationResult.dietPlans?.length || 0;
+        successMessage += `Found ${originalCount} diet plan${originalCount !== 1 ? 's' : ''}, using only the first one.`;
+      }
+
       setImportStatus({
         status: "success",
-        message: `Successfully parsed import data. Found ${workoutPlans?.length || 0} workout plans and ${dietPlans?.length || 0} diet plans.`,
+        message: successMessage,
         data: {
           workoutPlans,
           dietPlans
@@ -156,18 +173,50 @@ export function PlanImport({ onImport }: PlanImportProps) {
   }
 
   const handleImport = () => {
-    if (importStatus.status === "success" && importStatus.data) {
+    if (importStatus.status !== "success" || !importStatus.data) {
+      toast({
+        title: "Error",
+        description: "Please upload or paste valid plan data first.",
+        variant: "destructive"
+      })
+      return
+    }
+
+    try {
+      // Import the plans
       onImport(
         importStatus.data.workoutPlans,
         importStatus.data.dietPlans
       )
+
+      // Show success message
+      let successMessage = "";
+      
+      if (importType === "both" || importType === "workout") {
+        if (importStatus.data.workoutPlans && importStatus.data.workoutPlans.length > 0) {
+          successMessage += "Workout plan imported and set as active. Your previous plan and all associated data have been replaced. ";
+        }
+      }
+      
+      if (importType === "both" || importType === "diet") {
+        if (importStatus.data.dietPlans && importStatus.data.dietPlans.length > 0) {
+          successMessage += "Diet plan imported and set as active. Your previous plan and all associated data have been replaced.";
+        }
+      }
       
       toast({
-        title: "Plans Imported",
-        description: `Successfully imported ${importStatus.data.workoutPlans?.length || 0} workout plans and ${importStatus.data.dietPlans?.length || 0} diet plans.`,
+        title: "Plan Imported",
+        description: successMessage || "Import successful.",
       })
-      
-      resetImportState()
+
+      // Reset the form
+      setIsOpen(false)
+    } catch (error) {
+      toast({
+        title: "Import Failed",
+        description: error instanceof Error ? error.message : "An unknown error occurred",
+        variant: "destructive"
+      })
     }
   }
 
@@ -197,14 +246,16 @@ export function PlanImport({ onImport }: PlanImportProps) {
       <DialogTrigger asChild>
         <Button variant="outline" size="sm" className="gap-2">
           <FileDown className="h-4 w-4" />
-          Import Plans
+          Replace Plan
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-md w-[95vw] sm:w-auto overflow-y-auto max-h-[90vh]">
+      <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Import Plans</DialogTitle>
+          <DialogTitle>Replace Current Plan</DialogTitle>
           <DialogDescription>
-            Import workout and diet plans from a JSON file or by pasting JSON directly.
+            Import a workout or diet plan from a file or paste JSON data. 
+            The imported plan will replace your current plan and clear all associated data.
+            Only the first plan will be used if multiple plans are present in the imported data.
           </DialogDescription>
         </DialogHeader>
         
@@ -260,7 +311,7 @@ export function PlanImport({ onImport }: PlanImportProps) {
               {(importType === "both" || importType === "workout") && (
                 <div className="space-y-2">
                   <Label htmlFor="workout-file" className="text-sm font-medium">
-                    Upload Workout Plans
+                    Upload Workout Plan
                   </Label>
                   <input
                     ref={workoutFileInputRef}
@@ -276,7 +327,7 @@ export function PlanImport({ onImport }: PlanImportProps) {
               {(importType === "both" || importType === "diet") && (
                 <div className="space-y-2">
                   <Label htmlFor="diet-file" className="text-sm font-medium">
-                    Upload Diet Plans
+                    Upload Diet Plan
                   </Label>
                   <input
                     ref={dietFileInputRef}
@@ -361,112 +412,60 @@ export function PlanImport({ onImport }: PlanImportProps) {
               "protein": 5,
               "carbs": 27,
               "fats": 3
-            },
-            {
-              "name": "Protein Shake",
-              "completed": false,
-              "calories": 120,
-              "protein": 24,
-              "carbs": 3,
-              "fats": 1
             }
-          ],
-          "calories": 270,
-          "protein": 29,
-          "carbs": 30,
-          "fats": 4
+          ]
         }
       ]
     }
   ]
 }` : importType === "workout" ? 
-`[
-  {
-    "id": "custom-plan",
-    "name": "My Custom Plan",
-    "description": "A custom workout plan",
-    "days": [...]
-  }
-]` : 
-`[
-  {
-    "id": "custom-diet",
-    "name": "My Custom Diet",
-    "description": "A custom diet plan",
-    "targetCalories": 2000,
-    "targetProtein": 150,
-    "targetCarbs": 200,
-    "targetFats": 70,
-    "meals": [
-      {
-        "name": "Breakfast",
-        "time": "8:00 AM",
-        "items": [
-          {
-            "name": "Oatmeal",
-            "completed": false,
-            "calories": 150,
-            "protein": 5,
-            "carbs": 27,
-            "fats": 3
-          },
-          {
-            "name": "Protein Shake",
-            "completed": false,
-            "calories": 120,
-            "protein": 24,
-            "carbs": 3,
-            "fats": 1
-          }
-        ],
-        "calories": 270,
-        "protein": 29,
-        "carbs": 30,
-        "fats": 4
-      },
-      {
-        "name": "Lunch",
-        "time": "12:00 PM",
-        "items": [
-          {
-            "name": "Chicken Breast (150g)",
-            "completed": false,
-            "calories": 250,
-            "protein": 45,
-            "carbs": 0,
-            "fats": 5
-          },
-          {
-            "name": "Brown Rice (100g)",
-            "completed": false,
-            "calories": 130,
-            "protein": 3,
-            "carbs": 28,
-            "fats": 1
-          }
-        ],
-        "calories": 380,
-        "protein": 48,
-        "carbs": 28,
-        "fats": 6
-      }
-    ]
-  }
-]`}
+`{
+  "id": "custom-plan",
+  "name": "My Custom Plan",
+  "description": "A custom workout plan",
+  "days": [...]
+}` : 
+`{
+  "id": "custom-diet",
+  "name": "My Custom Diet",
+  "description": "A custom diet plan",
+  "targetCalories": 2000,
+  "targetProtein": 150,
+  "targetCarbs": 200,
+  "targetFats": 70,
+  "meals": [
+    {
+      "name": "Breakfast",
+      "time": "8:00 AM",
+      "items": [
+        {
+          "name": "Oatmeal",
+          "completed": false,
+          "calories": 150,
+          "protein": 5,
+          "carbs": 27,
+          "fats": 3
+        }
+      ]
+    }
+  ]
+}`}
             </pre>
           </div>
         </div>
         
-        <DialogFooter className="flex flex-col sm:flex-row gap-2 sm:gap-0">
-          <Button variant="outline" onClick={() => setIsOpen(false)} className="w-full sm:w-auto">
+        <DialogFooter className="mt-4">
+          <Button 
+            variant="outline" 
+            onClick={() => setIsOpen(false)}
+          >
             Cancel
           </Button>
           <Button 
-            onClick={handleImport} 
+            onClick={handleImport}
             disabled={importStatus.status !== "success"}
-            className="w-full sm:w-auto"
           >
-            Import Plans
+            Replace Current Plan
           </Button>
         </DialogFooter>
       </DialogContent>

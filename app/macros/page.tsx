@@ -29,40 +29,57 @@ export default function MacrosPage() {
     fats: 80
   })
   
-  // Load saved data from localStorage on component mount
+  // Load saved data on mount
   useEffect(() => {
-    // Get daily history
-    const savedHistory = safeGetItem<DailyMacros[]>("dietHistory", []);
-    setDailyHistory(savedHistory);
+    loadMacroData();
     
-    // Get target macros from diet plan
-    const mealPlan = safeGetItem<any[]>("mealPlan", []);
-    if (mealPlan.length > 0) {
-      try {
-        // Calculate total calories and macros from meal plan
-        const totalCalories = mealPlan.reduce((sum: number, meal: any) => 
-          sum + meal.items.reduce((mealSum: number, item: any) => mealSum + item.calories, 0), 0);
-        
-        const totalProtein = mealPlan.reduce((sum: number, meal: any) => 
-          sum + meal.items.reduce((mealSum: number, item: any) => mealSum + item.protein, 0), 0);
-        
-        const totalCarbs = mealPlan.reduce((sum: number, meal: any) => 
-          sum + meal.items.reduce((mealSum: number, item: any) => mealSum + item.carbs, 0), 0);
-        
-        const totalFats = mealPlan.reduce((sum: number, meal: any) => 
-          sum + meal.items.reduce((mealSum: number, item: any) => mealSum + item.fats, 0), 0);
-        
-        setTargetMacros({
-          calories: Math.round(totalCalories),
-          protein: Math.round(totalProtein),
-          carbs: Math.round(totalCarbs),
-          fats: Math.round(totalFats)
-        });
-      } catch (error) {
-        console.error("Error calculating macros from meal plan:", error);
+    // Set up refresh interval (every 30 seconds)
+    const refreshInterval = setInterval(() => {
+      loadMacroData();
+    }, 30000); // Refresh every 30 seconds
+    
+    // Set up visibility change listener to refresh data when page becomes visible
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadMacroData();
       }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // Clean up
+    return () => {
+      clearInterval(refreshInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+  
+  // Function to load macro data from localStorage
+  const loadMacroData = () => {
+    try {
+      const savedHistory = safeGetItem<DailyMacros[]>("macroHistory", []);
+      if (savedHistory && Array.isArray(savedHistory)) {
+        // Filter out any invalid entries
+        const validHistory = savedHistory.filter(item => 
+          item && typeof item === 'object' && item.date && 
+          typeof item.calories === 'number' && 
+          typeof item.protein === 'number' && 
+          typeof item.carbs === 'number' && 
+          typeof item.fats === 'number'
+        );
+        
+        // Sort by date (newest first)
+        const sortedHistory = [...validHistory].sort((a, b) => 
+          new Date(b.date).getTime() - new Date(a.date).getTime()
+        );
+        
+        setDailyHistory(sortedHistory);
+        console.log("Loaded macro history:", sortedHistory);
+      }
+    } catch (error) {
+      console.error("Error loading macro data:", error);
     }
-  }, [])
+  };
   
   // Calendar functions
   const getWeekDays = (date: Date) => {
