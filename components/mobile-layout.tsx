@@ -13,6 +13,9 @@ export function MobileLayout({ children }: MobileLayoutProps) {
   const pathname = usePathname()
   
   const isActive = (path: string) => {
+    if (path === "/workout" && pathname.startsWith("/workout")) {
+      return true
+    }
     return pathname === path
   }
   

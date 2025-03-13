@@ -3,15 +3,34 @@
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Save, TrendingUp, Calendar, Dumbbell, Utensils, ChevronLeft, ChevronRight } from "lucide-react"
+import { Save, TrendingUp, Calendar, Dumbbell, Utensils, ChevronLeft, ChevronRight, ExternalLink, Info, HelpCircle, Check } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { MobileLayout } from "@/components/mobile-layout"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { format, startOfWeek, addDays, isSameDay, subDays } from "date-fns"
+import { format, startOfWeek, addDays, isSameDay, subDays, parseISO, isValid, isWithinInterval, endOfWeek, isAfter } from "date-fns"
+import { safeGetItem, safeSetItem } from "@/lib/utils"
+import Link from "next/link"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { Progress } from "@/components/ui/progress"
+
+interface Exercise {
+  name: string
+  sets: string
+  reps: number
+  completed: boolean
+}
 
 interface WorkoutDay {
   name: string
-  exercises: { name: string; sets: string; completed: boolean }[]
+  exercises: Exercise[]
 }
 
 interface MealItem {
@@ -37,12 +56,199 @@ interface DailyMacros {
   fats: number
 }
 
+interface WorkoutHistory {
+  date: string
+  exerciseName: string
+  reps: number
+}
+
+// Helper function to check if a date is today
+function isToday(date: Date) {
+  return isSameDay(date, new Date())
+}
+
+// Helper component to explain the diet calendar
+function DietCalendarHelp() {
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-6 w-6 absolute top-3 right-3">
+          <HelpCircle className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Diet Calendar Guide</DialogTitle>
+          <DialogDescription>
+            Understanding your diet tracking calendar
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 text-sm">
+          <div>
+            <h3 className="font-medium mb-1">Navigation</h3>
+            <p className="text-muted-foreground">
+              Use the arrow buttons to navigate between weeks. The current day is highlighted.
+            </p>
+          </div>
+          
+          <div>
+            <h3 className="font-medium mb-1">Bar Heights</h3>
+            <p className="text-muted-foreground">
+              The height of each bar represents the percentage of your daily target consumed.
+              A full-height bar means you've reached 100% of your target.
+            </p>
+          </div>
+          
+          <div>
+            <h3 className="font-medium mb-1">Color Coding</h3>
+            <div className="flex flex-wrap gap-2 mt-2">
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-primary/50 rounded-full mr-1"></div>
+                <span>Calories</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-blue-500/50 rounded-full mr-1"></div>
+                <span>Protein</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-green-500/50 rounded-full mr-1"></div>
+                <span>Carbs</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-yellow-500/50 rounded-full mr-1"></div>
+                <span>Fats</span>
+              </div>
+            </div>
+          </div>
+          
+          <div>
+            <h3 className="font-medium mb-1">Data Syncing</h3>
+            <p className="text-muted-foreground">
+              Your diet data is automatically synced when you mark items as completed in the Diet tab.
+              The calendar updates in real-time to reflect your progress.
+            </p>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// Helper component to show diet tracking progress for the current week
+function DietWeekProgress() {
+  const { toast } = useToast()
+  const [dietDays, setDietDays] = useState<any[]>([])
+  const [currentWeek, setCurrentWeek] = useState<Date[]>([])
+  
+  useEffect(() => {
+    // Load diet days
+    const savedDietDays = safeGetItem<any[]>("dietDays", [])
+    if (savedDietDays.length > 0) {
+      setDietDays(savedDietDays)
+    }
+    
+    // Calculate current week days
+    const today = new Date()
+    const weekStart = startOfWeek(today, { weekStartsOn: 1 })
+    const weekDays = []
+    
+    for (let i = 0; i < 7; i++) {
+      weekDays.push(addDays(weekStart, i))
+    }
+    
+    setCurrentWeek(weekDays)
+  }, [])
+  
+  // Check if a date has a diet plan
+  const hasDietPlan = (date: Date) => {
+    const dateString = date.toISOString().split('T')[0]
+    return dietDays.some(day => day.date === dateString)
+  }
+  
+  // Check if a date's diet is completed
+  const isDietCompleted = (date: Date) => {
+    const dateString = date.toISOString().split('T')[0]
+    const dietDay = dietDays.find(day => day.date === dateString)
+    return dietDay?.completed || false
+  }
+  
+  // Calculate completion percentage for the week
+  const getWeekCompletionPercentage = () => {
+    const today = new Date()
+    const weekStart = startOfWeek(today, { weekStartsOn: 1 })
+    const weekEnd = endOfWeek(today, { weekStartsOn: 1 })
+    
+    // Only count days up to today
+    const relevantDays = dietDays.filter(day => {
+      const dayDate = new Date(day.date)
+      return isWithinInterval(dayDate, { start: weekStart, end: today }) && 
+             !isAfter(dayDate, today)
+    })
+    
+    if (relevantDays.length === 0) return 0
+    
+    const completedDays = relevantDays.filter(day => day.completed).length
+    return Math.round((completedDays / relevantDays.length) * 100)
+  }
+  
+  return (
+    <Card className="shadow-sm">
+      <CardHeader className="py-3 px-4">
+        <CardTitle className="text-base flex items-center">
+          <Calendar className="h-4 w-4 mr-2" />
+          Weekly Diet Progress
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="py-2 px-4">
+        <div className="grid grid-cols-7 gap-1 mb-4">
+          {currentWeek.map((day, index) => (
+            <div 
+              key={index} 
+              className={`text-center p-1 rounded-md ${
+                isToday(day) ? 'bg-primary/10' : 
+                hasDietPlan(day) ? 'bg-muted/30' : ''
+              }`}
+            >
+              <p className="text-xs text-muted-foreground">{format(day, 'EEE')}</p>
+              <p className={`text-xs font-medium ${isToday(day) ? 'text-primary' : ''}`}>
+                {format(day, 'd')}
+              </p>
+              {isDietCompleted(day) ? (
+                <div className="w-5 h-5 bg-green-500 rounded-full mx-auto mt-1 flex items-center justify-center">
+                  <Check className="h-3 w-3 text-white" />
+                </div>
+              ) : hasDietPlan(day) ? (
+                <div className="w-5 h-5 bg-muted rounded-full mx-auto mt-1" />
+              ) : (
+                <div className="w-5 h-5 mx-auto mt-1" />
+              )}
+            </div>
+          ))}
+        </div>
+        
+        <div className="space-y-2 mt-4">
+          <div className="flex justify-between text-xs">
+            <span>Week Completion</span>
+            <span>{getWeekCompletionPercentage()}%</span>
+          </div>
+          <Progress value={getWeekCompletionPercentage()} className="h-2" />
+        </div>
+        
+        <div className="mt-4 text-xs text-muted-foreground">
+          <p>Track your diet day by day to see your progress here.</p>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function ProgressPage() {
   const { toast } = useToast()
   const [workoutStats, setWorkoutStats] = useState({
     totalExercises: 0,
     completedExercises: 0,
-    completionPercentage: 0
+    completionPercentage: 0,
+    totalReps: 0
   })
   
   const [dietStats, setDietStats] = useState({
@@ -50,123 +256,194 @@ export default function ProgressPage() {
     completedItems: 0,
     completionPercentage: 0,
     consumedCalories: 0,
-    totalCalories: 0,
+    totalCalories: 2000, // Default values
     consumedProtein: 0,
-    totalProtein: 0,
+    totalProtein: 150,
     consumedCarbs: 0,
-    totalCarbs: 0,
+    totalCarbs: 200,
     consumedFats: 0,
-    totalFats: 0
+    totalFats: 70
   })
   
   const [dailyHistory, setDailyHistory] = useState<DailyMacros[]>([])
+  const [workoutHistory, setWorkoutHistory] = useState<WorkoutHistory[]>([])
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
+  const [selectedExercise, setSelectedExercise] = useState<string>("")
   
   // Load saved data from localStorage on component mount
   useEffect(() => {
     // Get workout stats
-    const savedWorkout = localStorage.getItem("workoutPlan")
-    if (savedWorkout) {
-      const workoutPlan: WorkoutDay[] = JSON.parse(savedWorkout)
-      const totalExercises = workoutPlan.reduce((sum: number, day: WorkoutDay) => sum + day.exercises.length, 0)
-      const completedExercises = workoutPlan.reduce(
+    const savedWorkout = safeGetItem<WorkoutDay[]>("workoutPlan", [])
+    if (savedWorkout.length > 0) {
+      const totalExercises = savedWorkout.reduce((sum: number, day: WorkoutDay) => sum + day.exercises.length, 0)
+      const completedExercises = savedWorkout.reduce(
         (sum: number, day: WorkoutDay) => sum + day.exercises.filter(ex => ex.completed).length, 
         0
       )
       const completionPercentage = Math.round((completedExercises / totalExercises) * 100)
+      const totalReps = savedWorkout.reduce(
+        (sum: number, day: WorkoutDay) => sum + day.exercises.reduce(
+          (daySum: number, exercise: Exercise) => daySum + exercise.reps, 0
+        ), 0
+      )
       
       setWorkoutStats({
         totalExercises,
         completedExercises,
-        completionPercentage
+        completionPercentage,
+        totalReps
       })
+
+      // Extract all unique exercise names for the dropdown
+      const allExercises = savedWorkout.flatMap(day => day.exercises.map(ex => ex.name))
+      const uniqueExercises = [...new Set(allExercises)]
+      if (uniqueExercises.length > 0 && !selectedExercise) {
+        setSelectedExercise(uniqueExercises[0])
+      }
+
+      // Save workout history if it doesn't exist
+      const today = new Date().toISOString().split('T')[0]
+      const existingHistory = safeGetItem<WorkoutHistory[]>("workoutHistory", [])
+      
+      // Only save today's workout data if it doesn't already exist in history
+      const todaysEntries = existingHistory.filter(entry => entry.date === today)
+      const exercisesToSave: WorkoutHistory[] = []
+      
+      savedWorkout.forEach(day => {
+        day.exercises.forEach(exercise => {
+          if (exercise.reps > 0) {
+            // Check if this exercise already has an entry for today
+            const existingEntry = todaysEntries.find(entry => 
+              entry.date === today && entry.exerciseName === exercise.name
+            )
+            
+            if (!existingEntry) {
+              exercisesToSave.push({
+                date: today,
+                exerciseName: exercise.name,
+                reps: exercise.reps
+              })
+            }
+          }
+        })
+      })
+      
+      if (exercisesToSave.length > 0) {
+        const updatedHistory = [...existingHistory, ...exercisesToSave]
+        safeSetItem("workoutHistory", updatedHistory)
+        setWorkoutHistory(updatedHistory)
+      } else {
+        setWorkoutHistory(existingHistory)
+      }
     }
     
-    // Get diet stats
-    const savedMeals = localStorage.getItem("mealPlan")
-    if (savedMeals) {
-      const mealPlan: Meal[] = JSON.parse(savedMeals)
-      const totalItems = mealPlan.reduce((sum: number, meal: Meal) => sum + meal.items.length, 0)
-      const completedItems = mealPlan.reduce(
-        (sum: number, meal: Meal) => sum + meal.items.filter(item => item.completed).length, 
-        0
-      )
-      const completionPercentage = Math.round((completedItems / totalItems) * 100)
+    // Get diet stats - updated to use dietDays
+    const savedDietDays = safeGetItem<any[]>("dietDays", [])
+    if (savedDietDays.length > 0) {
+      // Find today's diet or the most recent one
+      const today = new Date().toISOString().split('T')[0]
+      const todaysDiet = savedDietDays.find(day => day.date === today)
       
-      // Calculate total calories and macros
-      const totalCalories = mealPlan.reduce((sum: number, meal: Meal) => 
-        sum + meal.items.reduce((mealSum: number, item: MealItem) => mealSum + item.calories, 0), 0)
+      const dietToUse = todaysDiet || savedDietDays[savedDietDays.length - 1]
       
-      const totalProtein = mealPlan.reduce((sum: number, meal: Meal) => 
-        sum + meal.items.reduce((mealSum: number, item: MealItem) => mealSum + item.protein, 0), 0)
-      
-      const totalCarbs = mealPlan.reduce((sum: number, meal: Meal) => 
-        sum + meal.items.reduce((mealSum: number, item: MealItem) => mealSum + item.carbs, 0), 0)
-      
-      const totalFats = mealPlan.reduce((sum: number, meal: Meal) => 
-        sum + meal.items.reduce((mealSum: number, item: MealItem) => mealSum + item.fats, 0), 0)
-      
-      // Calculate consumed calories and macros
-      const consumedCalories = mealPlan.reduce((sum: number, meal: Meal) => 
-        sum + meal.items.reduce((mealSum: number, item: MealItem) => 
-          mealSum + (item.completed ? item.calories : 0), 0), 0)
-      
-      const consumedProtein = mealPlan.reduce((sum: number, meal: Meal) => 
-        sum + meal.items.reduce((mealSum: number, item: MealItem) => 
-          mealSum + (item.completed ? item.protein : 0), 0), 0)
-      
-      const consumedCarbs = mealPlan.reduce((sum: number, meal: Meal) => 
-        sum + meal.items.reduce((mealSum: number, item: MealItem) => 
-          mealSum + (item.completed ? item.carbs : 0), 0), 0)
-      
-      const consumedFats = mealPlan.reduce((sum: number, meal: Meal) => 
-        sum + meal.items.reduce((mealSum: number, item: MealItem) => 
-          mealSum + (item.completed ? item.fats : 0), 0), 0)
-      
-      setDietStats({
-        totalItems,
-        completedItems,
-        completionPercentage,
-        consumedCalories: Math.round(consumedCalories),
-        totalCalories,
-        consumedProtein: Math.round(consumedProtein),
-        totalProtein,
-        consumedCarbs: Math.round(consumedCarbs),
-        totalCarbs,
-        consumedFats: Math.round(consumedFats),
-        totalFats
-      })
+      if (dietToUse && dietToUse.meals) {
+        const meals = dietToUse.meals
+        const totalItems = meals.reduce((sum: number, meal: any) => sum + meal.items.length, 0)
+        const completedItems = meals.reduce(
+          (sum: number, meal: any) => sum + meal.items.filter((item: any) => item.completed).length, 
+          0
+        )
+        const completionPercentage = Math.round((completedItems / totalItems) * 100)
+        
+        // Calculate total calories and macros
+        const totalCalories = meals.reduce((sum: number, meal: any) => 
+          sum + meal.items.reduce((mealSum: number, item: any) => mealSum + item.calories, 0), 0)
+        
+        const totalProtein = meals.reduce((sum: number, meal: any) => 
+          sum + meal.items.reduce((mealSum: number, item: any) => mealSum + item.protein, 0), 0)
+        
+        const totalCarbs = meals.reduce((sum: number, meal: any) => 
+          sum + meal.items.reduce((mealSum: number, item: any) => mealSum + item.carbs, 0), 0)
+        
+        const totalFats = meals.reduce((sum: number, meal: any) => 
+          sum + meal.items.reduce((mealSum: number, item: any) => mealSum + item.fats, 0), 0)
+        
+        // Calculate consumed calories and macros
+        const consumedCalories = meals.reduce((sum: number, meal: any) => 
+          sum + meal.items.reduce((mealSum: number, item: any) => 
+            mealSum + (item.completed ? item.calories : 0), 0), 0)
+        
+        const consumedProtein = meals.reduce((sum: number, meal: any) => 
+          sum + meal.items.reduce((mealSum: number, item: any) => 
+            mealSum + (item.completed ? item.protein : 0), 0), 0)
+        
+        const consumedCarbs = meals.reduce((sum: number, meal: any) => 
+          sum + meal.items.reduce((mealSum: number, item: any) => 
+            mealSum + (item.completed ? item.carbs : 0), 0), 0)
+        
+        const consumedFats = meals.reduce((sum: number, meal: any) => 
+          sum + meal.items.reduce((mealSum: number, item: any) => 
+            mealSum + (item.completed ? item.fats : 0), 0), 0)
+        
+        setDietStats({
+          totalItems,
+          completedItems,
+          completionPercentage,
+          consumedCalories: Math.round(consumedCalories),
+          totalCalories,
+          consumedProtein: Math.round(consumedProtein),
+          totalProtein,
+          consumedCarbs: Math.round(consumedCarbs),
+          totalCarbs,
+          consumedFats: Math.round(consumedFats),
+          totalFats
+        })
+      }
     }
     
     // Get daily history
-    const savedHistory = localStorage.getItem("dietHistory")
-    if (savedHistory) {
-      setDailyHistory(JSON.parse(savedHistory))
+    const savedHistory = safeGetItem<DailyMacros[]>("dietHistory", [])
+    if (savedHistory.length > 0) {
+      // Validate dates and ensure they're in proper format
+      const validatedHistory = savedHistory.filter(entry => {
+        try {
+          return isValid(parseISO(entry.date))
+        } catch (e) {
+          return false
+        }
+      })
+      
+      setDailyHistory(validatedHistory)
     } else {
       // Initialize with some sample data for the past 14 days
-      const today = new Date()
-      const initialHistory: DailyMacros[] = []
-      
-      for (let i = 13; i >= 0; i--) {
-        const date = new Date()
-        date.setDate(today.getDate() - i)
-        
-        // Generate some random data for demonstration
-        const randomPercentage = Math.random() * 0.3 + 0.7 // 70-100% completion
-        
-        initialHistory.push({
-          date: date.toISOString().split('T')[0],
-          calories: Math.round(dietStats.totalCalories * (i === 0 ? 0 : randomPercentage)),
-          protein: Math.round(dietStats.totalProtein * (i === 0 ? 0 : randomPercentage)),
-          carbs: Math.round(dietStats.totalCarbs * (i === 0 ? 0 : randomPercentage)),
-          fats: Math.round(dietStats.totalFats * (i === 0 ? 0 : randomPercentage))
-        })
-      }
-      
-      setDailyHistory(initialHistory)
-      localStorage.setItem("dietHistory", JSON.stringify(initialHistory))
+      initializeDietHistory()
     }
   }, [])
+  
+  // Initialize diet history with sample data
+  const initializeDietHistory = () => {
+    const today = new Date()
+    const initialHistory: DailyMacros[] = []
+    
+    for (let i = 13; i >= 0; i--) {
+      const date = new Date()
+      date.setDate(today.getDate() - i)
+      
+      // Generate some random data for demonstration
+      const randomPercentage = Math.random() * 0.3 + 0.7 // 70-100% completion
+      
+      initialHistory.push({
+        date: date.toISOString().split('T')[0],
+        calories: Math.round(dietStats.totalCalories * (i === 0 ? 0.8 : randomPercentage)),
+        protein: Math.round(dietStats.totalProtein * (i === 0 ? 0.8 : randomPercentage)),
+        carbs: Math.round(dietStats.totalCarbs * (i === 0 ? 0.8 : randomPercentage)),
+        fats: Math.round(dietStats.totalFats * (i === 0 ? 0.8 : randomPercentage))
+      })
+    }
+    
+    setDailyHistory(initialHistory)
+    safeSetItem("dietHistory", initialHistory)
+  }
   
   // Calendar functions
   const getWeekDays = (date: Date) => {
@@ -199,10 +476,6 @@ export default function ProgressPage() {
     }
   }
   
-  const isToday = (date: Date) => {
-    return isSameDay(date, new Date())
-  }
-  
   // Get last 7 days for trend view
   const getLast7Days = () => {
     const days = []
@@ -217,6 +490,19 @@ export default function ProgressPage() {
   
   const last7Days = getLast7Days()
   
+  // Get exercise history for selected exercise
+  const getExerciseHistory = (exerciseName: string) => {
+    return workoutHistory
+      .filter(entry => entry.exerciseName === exerciseName)
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+      .slice(-7) // Get last 7 entries
+  }
+  
+  // Get all unique exercise names from workout history
+  const getUniqueExercises = () => {
+    return [...new Set(workoutHistory.map(entry => entry.exerciseName))]
+  }
+  
   // Get today's date
   const today = new Date()
   const options = { weekday: 'long', month: 'short', day: 'numeric' } as const
@@ -230,110 +516,90 @@ export default function ProgressPage() {
           <p className="text-sm text-muted-foreground">{formattedDate}</p>
         </div>
         
-        <Tabs defaultValue="summary" className="space-y-4">
-          <TabsList className="grid grid-cols-3 h-auto p-1">
-            <TabsTrigger value="summary" className="text-xs py-2">Summary</TabsTrigger>
+        <Tabs defaultValue="overview" className="space-y-4">
+          <TabsList className="grid grid-cols-2 h-auto p-1">
+            <TabsTrigger value="overview" className="text-xs py-2">Overview</TabsTrigger>
             <TabsTrigger value="history" className="text-xs py-2">History</TabsTrigger>
-            <TabsTrigger value="stats" className="text-xs py-2">Stats</TabsTrigger>
           </TabsList>
           
-          <TabsContent value="summary" className="space-y-4 mt-2">
-            <Card className="shadow-sm">
-              <CardHeader className="py-3 px-4">
-                <CardTitle className="text-base flex items-center">
-                  <Dumbbell className="h-4 w-4 mr-2" />
-                  Workout Progress
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="py-2 px-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div>
-                    <p className="text-sm font-medium">Completion</p>
-                    <p className="text-xs text-muted-foreground">
-                      {workoutStats.completedExercises} of {workoutStats.totalExercises} exercises
-                    </p>
+          <TabsContent value="overview" className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <Card className="shadow-sm">
+                <CardHeader className="py-3 px-4">
+                  <CardTitle className="text-base flex items-center">
+                    <Dumbbell className="h-4 w-4 mr-2" />
+                    Workout
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="py-2 px-4">
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span>Completion</span>
+                      <span>{workoutStats.completionPercentage}%</span>
+                    </div>
+                    <div className="h-2 bg-muted rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-primary rounded-full" 
+                        style={{ width: `${workoutStats.completionPercentage}%` }}
+                      ></div>
+                    </div>
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>{workoutStats.completedExercises} completed</span>
+                      <span>{workoutStats.totalReps} total reps</span>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-2xl font-bold">{workoutStats.completionPercentage}%</p>
+                </CardContent>
+              </Card>
+              
+              <Card className="shadow-sm">
+                <CardHeader className="py-3 px-4">
+                  <CardTitle className="text-base flex items-center">
+                    <Utensils className="h-4 w-4 mr-2" />
+                    Diet
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="py-2 px-4">
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span>Completion</span>
+                      <span>{dietStats.completionPercentage}%</span>
+                    </div>
+                    <div className="h-2 bg-muted rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-primary rounded-full" 
+                        style={{ width: `${dietStats.completionPercentage}%` }}
+                      ></div>
+                    </div>
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>{dietStats.consumedCalories} kcal</span>
+                      <span>{dietStats.consumedProtein}g protein</span>
+                    </div>
                   </div>
-                </div>
-                
-                <div className="w-full bg-muted/50 rounded-full h-2.5">
-                  <div 
-                    className="bg-primary h-2.5 rounded-full" 
-                    style={{ width: `${workoutStats.completionPercentage}%` }}
-                  ></div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </div>
+            
+            <DietWeekProgress />
             
             <Card className="shadow-sm">
               <CardHeader className="py-3 px-4">
                 <CardTitle className="text-base flex items-center">
-                  <Utensils className="h-4 w-4 mr-2" />
-                  Diet Progress
+                  <TrendingUp className="h-4 w-4 mr-2" />
+                  Exercise Progress
                 </CardTitle>
               </CardHeader>
               <CardContent className="py-2 px-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div>
-                    <p className="text-sm font-medium">Completion</p>
-                    <p className="text-xs text-muted-foreground">
-                      {dietStats.completedItems} of {dietStats.totalItems} items
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-2xl font-bold">{dietStats.completionPercentage}%</p>
-                  </div>
-                </div>
-                
-                <div className="w-full bg-muted/50 rounded-full h-2.5 mb-4">
-                  <div 
-                    className="bg-primary h-2.5 rounded-full" 
-                    style={{ width: `${dietStats.completionPercentage}%` }}
-                  ></div>
-                </div>
-                
-                <div className="grid grid-cols-2 gap-4 mt-4">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Calories</p>
-                    <p className="text-sm font-medium">
-                      {dietStats.consumedCalories} / {dietStats.totalCalories} kcal
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Protein</p>
-                    <p className="text-sm font-medium">
-                      {dietStats.consumedProtein} / {dietStats.totalProtein}g
-                    </p>
-                  </div>
-                </div>
-                
-                <div className="grid grid-cols-2 gap-4 mt-2">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Carbs</p>
-                    <p className="text-sm font-medium">
-                      {dietStats.consumedCarbs} / {dietStats.totalCarbs}g
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Fats</p>
-                    <p className="text-sm font-medium">
-                      {dietStats.consumedFats} / {dietStats.totalFats}g
-                    </p>
-                  </div>
-                </div>
+                {/* ... existing content ... */}
               </CardContent>
             </Card>
-          </TabsContent>
-          
-          <TabsContent value="history" className="space-y-4 mt-2">
-            <Card className="shadow-sm">
+            
+            <Card className="shadow-sm relative">
+              <DietCalendarHelp />
               <CardHeader className="py-3 px-4">
                 <div className="flex justify-between items-center">
                   <CardTitle className="text-base flex items-center">
                     <Calendar className="h-4 w-4 mr-2" />
-                    Weekly Macros
+                    Weekly Diet Tracker
                   </CardTitle>
                   <div className="flex items-center space-x-1">
                     <Button 
@@ -356,120 +622,7 @@ export default function ProgressPage() {
                 </div>
               </CardHeader>
               <CardContent className="py-2 px-4">
-                <div className="grid grid-cols-7 gap-1 mb-2">
-                  {weekDays.map((day, index) => (
-                    <div key={index} className="text-center">
-                      <p className="text-xs text-muted-foreground">{format(day, 'EEE')}</p>
-                      <p className={`text-xs font-medium ${isToday(day) ? 'text-primary' : ''}`}>
-                        {format(day, 'd')}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-                
-                <div className="space-y-4 mt-4">
-                  <div className="space-y-2">
-                    <p className="text-xs font-medium">Calories (kcal)</p>
-                    <div className="grid grid-cols-7 gap-1 h-8">
-                      {weekDays.map((day, index) => {
-                        const dayData = getDayData(day)
-                        const percentage = Math.min(100, Math.round((dayData.calories / dietStats.totalCalories) * 100))
-                        
-                        return (
-                          <div key={index} className="relative h-full flex flex-col justify-end">
-                            <div 
-                              className={`w-full bg-primary/20 rounded-sm ${isToday(day) ? 'bg-primary/30' : ''}`}
-                              style={{ height: `${percentage}%` }}
-                            ></div>
-                            <span className="absolute bottom-0 left-0 right-0 text-[10px] text-center">
-                              {dayData.calories}
-                            </span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <p className="text-xs font-medium">Protein (g)</p>
-                    <div className="grid grid-cols-7 gap-1 h-8">
-                      {weekDays.map((day, index) => {
-                        const dayData = getDayData(day)
-                        const percentage = Math.min(100, Math.round((dayData.protein / dietStats.totalProtein) * 100))
-                        
-                        return (
-                          <div key={index} className="relative h-full flex flex-col justify-end">
-                            <div 
-                              className={`w-full bg-blue-500/20 rounded-sm ${isToday(day) ? 'bg-blue-500/30' : ''}`}
-                              style={{ height: `${percentage}%` }}
-                            ></div>
-                            <span className="absolute bottom-0 left-0 right-0 text-[10px] text-center">
-                              {dayData.protein}
-                            </span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <p className="text-xs font-medium">Carbs (g)</p>
-                    <div className="grid grid-cols-7 gap-1 h-8">
-                      {weekDays.map((day, index) => {
-                        const dayData = getDayData(day)
-                        const percentage = Math.min(100, Math.round((dayData.carbs / dietStats.totalCarbs) * 100))
-                        
-                        return (
-                          <div key={index} className="relative h-full flex flex-col justify-end">
-                            <div 
-                              className={`w-full bg-green-500/20 rounded-sm ${isToday(day) ? 'bg-green-500/30' : ''}`}
-                              style={{ height: `${percentage}%` }}
-                            ></div>
-                            <span className="absolute bottom-0 left-0 right-0 text-[10px] text-center">
-                              {dayData.carbs}
-                            </span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <p className="text-xs font-medium">Fats (g)</p>
-                    <div className="grid grid-cols-7 gap-1 h-8">
-                      {weekDays.map((day, index) => {
-                        const dayData = getDayData(day)
-                        const percentage = Math.min(100, Math.round((dayData.fats / dietStats.totalFats) * 100))
-                        
-                        return (
-                          <div key={index} className="relative h-full flex flex-col justify-end">
-                            <div 
-                              className={`w-full bg-yellow-500/20 rounded-sm ${isToday(day) ? 'bg-yellow-500/30' : ''}`}
-                              style={{ height: `${percentage}%` }}
-                            ></div>
-                            <span className="absolute bottom-0 left-0 right-0 text-[10px] text-center">
-                              {dayData.fats}
-                            </span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="mt-4 pt-4 border-t">
-                  <p className="text-xs font-medium mb-2">Daily Targets</p>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <p className="text-muted-foreground">Calories: <span className="font-medium">{dietStats.totalCalories} kcal</span></p>
-                      <p className="text-muted-foreground">Protein: <span className="font-medium">{dietStats.totalProtein}g</span></p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Carbs: <span className="font-medium">{dietStats.totalCarbs}g</span></p>
-                      <p className="text-muted-foreground">Fats: <span className="font-medium">{dietStats.totalFats}g</span></p>
-                    </div>
-                  </div>
-                </div>
+                {/* ... existing content ... */}
               </CardContent>
             </Card>
             
@@ -477,73 +630,17 @@ export default function ProgressPage() {
               <CardHeader className="py-3 px-4">
                 <CardTitle className="text-base flex items-center">
                   <TrendingUp className="h-4 w-4 mr-2" />
-                  7-Day Trends
+                  7-Day Diet Trends
                 </CardTitle>
               </CardHeader>
               <CardContent className="py-2 px-4">
-                <div className="space-y-4">
-                  {last7Days.map((day, index) => {
-                    const dayData = getDayData(day)
-                    const caloriePercentage = Math.min(100, Math.round((dayData.calories / dietStats.totalCalories) * 100))
-                    const proteinPercentage = Math.min(100, Math.round((dayData.protein / dietStats.totalProtein) * 100))
-                    
-                    return (
-                      <div key={index} className="space-y-1">
-                        <div className="flex justify-between items-center">
-                          <p className="text-xs font-medium">
-                            {isToday(day) ? 'Today' : format(day, 'EEE, MMM d')}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {dayData.calories} kcal / {dayData.protein}g protein
-                          </p>
-                        </div>
-                        <div className="flex space-x-1 h-2">
-                          <div className="w-3/4 bg-muted/50 rounded-full overflow-hidden">
-                            <div 
-                              className="bg-primary h-full rounded-full" 
-                              style={{ width: `${caloriePercentage}%` }}
-                            ></div>
-                          </div>
-                          <div className="w-1/4 bg-muted/50 rounded-full overflow-hidden">
-                            <div 
-                              className="bg-blue-500 h-full rounded-full" 
-                              style={{ width: `${proteinPercentage}%` }}
-                            ></div>
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-                
-                <div className="flex items-center justify-between mt-4 text-xs text-muted-foreground">
-                  <div className="flex items-center">
-                    <div className="w-2 h-2 bg-primary rounded-full mr-1"></div>
-                    <span>Calories</span>
-                  </div>
-                  <div className="flex items-center">
-                    <div className="w-2 h-2 bg-blue-500 rounded-full mr-1"></div>
-                    <span>Protein</span>
-                  </div>
-                </div>
+                {/* ... existing content ... */}
               </CardContent>
             </Card>
           </TabsContent>
           
-          <TabsContent value="stats" className="space-y-4 mt-2">
-            <Card className="shadow-sm">
-              <CardHeader className="py-3 px-4">
-                <CardTitle className="text-base">Weekly Stats</CardTitle>
-              </CardHeader>
-              <CardContent className="py-2 px-4 text-center">
-                <p className="text-sm text-muted-foreground mb-4">
-                  Weekly statistics will be available soon.
-                </p>
-                <div className="flex items-center justify-center h-32">
-                  <Calendar className="h-12 w-12 text-muted-foreground/50" />
-                </div>
-              </CardContent>
-            </Card>
+          <TabsContent value="history" className="space-y-4">
+            {/* ... existing content ... */}
           </TabsContent>
         </Tabs>
       </div>

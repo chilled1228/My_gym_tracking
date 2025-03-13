@@ -3,15 +3,25 @@
 import { useState, useEffect, Suspense } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Save, PieChart, Calendar, ChevronLeft, ChevronRight } from "lucide-react"
+import { Save, PieChart, Calendar, ChevronLeft, ChevronRight, Check, ArrowRight } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Progress } from "@/components/ui/progress"
 import { MobileLayout } from "@/components/mobile-layout"
-import { format, startOfWeek, addDays, isSameDay } from "date-fns"
+import { format, startOfWeek, addDays, isSameDay, parseISO, addWeeks, isAfter, isBefore, startOfDay } from "date-fns"
 import { useSearchParams } from "next/navigation"
 import { safeGetItem, safeSetItem } from "@/lib/utils"
+import { useSyncIndicator } from "@/hooks/use-sync-indicator"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
+} from "@/components/ui/dialog"
 
 interface MealItem {
   name: string
@@ -40,13 +50,23 @@ interface DailyMacros {
   fats: number
 }
 
+// Add new interface for tracking diet by day
+interface DietDay {
+  date: string // ISO date string
+  meals: Meal[]
+  completed: boolean
+}
+
 // Create a client component that uses useSearchParams
 function DietPageContent() {
   const { toast } = useToast()
   const searchParams = useSearchParams()
   const tabParam = searchParams.get('tab')
   const [activeTab, setActiveTab] = useState<string>("meals")
-  const [mealPlan, setMealPlan] = useState<Meal[]>([
+  const showSyncIndicator = useSyncIndicator()
+  
+  // Default meal template
+  const defaultMealPlan: Meal[] = [
     {
       time: "5:30 AM",
       name: "Pre-Workout",
@@ -135,7 +155,15 @@ function DietPageContent() {
       carbs: 10,
       fats: 5,
     },
-  ])
+  ]
+  
+  // State for current day's meals
+  const [mealPlan, setMealPlan] = useState<Meal[]>(defaultMealPlan)
+  
+  // State for tracking diet by day
+  const [dietDays, setDietDays] = useState<DietDay[]>([])
+  const [currentDate, setCurrentDate] = useState<Date>(new Date())
+  const [showNextWeekDialog, setShowNextWeekDialog] = useState(false)
   
   const [dailyHistory, setDailyHistory] = useState<DailyMacros[]>([])
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
@@ -147,57 +175,245 @@ function DietPageContent() {
     }
   }, [tabParam])
 
-  // Load saved meal data from localStorage on component mount
+  // Load saved diet data from localStorage on component mount
   useEffect(() => {
-    const savedMealPlan = safeGetItem<Meal[]>("mealPlan", []);
-    if (savedMealPlan.length > 0) {
-      setMealPlan(savedMealPlan);
+    // Load diet days
+    const savedDietDays = safeGetItem<DietDay[]>("dietDays", [])
+    if (savedDietDays.length > 0) {
+      setDietDays(savedDietDays)
+      
+      // Find today's diet or the most recent one
+      const today = new Date().toISOString().split('T')[0]
+      const todaysDiet = savedDietDays.find(day => day.date === today)
+      
+      if (todaysDiet) {
+        // If today's diet exists, use it
+        setMealPlan(todaysDiet.meals)
+        setCurrentDate(new Date(today))
+      } else {
+        // Find the most recent diet day
+        const sortedDays = [...savedDietDays].sort((a, b) => 
+          new Date(b.date).getTime() - new Date(a.date).getTime()
+        )
+        
+        if (sortedDays.length > 0) {
+          const latestDate = new Date(sortedDays[0].date)
+          
+          // If the latest date is in the past, create a new day for today
+          if (isBefore(latestDate, startOfDay(new Date()))) {
+            createNewDietDay(today)
+          } else {
+            // Otherwise use the latest diet
+            setMealPlan(sortedDays[0].meals)
+            setCurrentDate(latestDate)
+          }
+        } else {
+          // If no diet days exist, create one for today
+          createNewDietDay(today)
+        }
+      }
+    } else {
+      // If no diet days exist, create one for today
+      createNewDietDay(new Date().toISOString().split('T')[0])
     }
     
-    const savedHistory = safeGetItem<DailyMacros[]>("dietHistory", []);
-    setDailyHistory(savedHistory);
-  }, [])
+    // Load daily history
+    const savedHistory = safeGetItem<DailyMacros[]>("dietHistory", [])
+    if (savedHistory.length > 0) {
+      setDailyHistory(savedHistory)
+    }
+    
+    // Set active tab from URL if present
+    if (tabParam) {
+      setActiveTab(tabParam)
+    }
+  }, [tabParam])
+  
+  // Create a new diet day
+  const createNewDietDay = (dateString: string) => {
+    const newDietDay: DietDay = {
+      date: dateString,
+      meals: JSON.parse(JSON.stringify(defaultMealPlan)), // Deep clone default meals
+      completed: false
+    }
+    
+    setMealPlan(newDietDay.meals)
+    setCurrentDate(new Date(dateString))
+    
+    // Add to diet days
+    const updatedDietDays = [...dietDays, newDietDay]
+    setDietDays(updatedDietDays)
+    safeSetItem("dietDays", updatedDietDays)
+  }
+  
+  // Navigate to a specific date
+  const navigateToDate = (date: Date) => {
+    const dateString = date.toISOString().split('T')[0]
+    const existingDietDay = dietDays.find(day => day.date === dateString)
+    
+    if (existingDietDay) {
+      // If diet for this date exists, load it
+      setMealPlan(existingDietDay.meals)
+      setCurrentDate(date)
+    } else {
+      // Create a new diet day for this date
+      createNewDietDay(dateString)
+    }
+  }
+  
+  // Navigate to previous day
+  const goToPreviousDay = () => {
+    const prevDate = new Date(currentDate)
+    prevDate.setDate(prevDate.getDate() - 1)
+    navigateToDate(prevDate)
+  }
+  
+  // Navigate to next day
+  const goToNextDay = () => {
+    const nextDate = new Date(currentDate)
+    nextDate.setDate(nextDate.getDate() + 1)
+    
+    // If moving to a new week, show confirmation dialog
+    const currentWeekStart = startOfWeek(currentDate, { weekStartsOn: 1 })
+    const nextWeekStart = startOfWeek(nextDate, { weekStartsOn: 1 })
+    
+    if (nextWeekStart.getTime() !== currentWeekStart.getTime() && 
+        isAfter(nextDate, new Date())) {
+      setShowNextWeekDialog(true)
+    } else {
+      navigateToDate(nextDate)
+    }
+  }
+  
+  // Move to next week
+  const moveToNextWeek = () => {
+    const nextWeekDate = addWeeks(currentDate, 1)
+    navigateToDate(nextWeekDate)
+    setShowNextWeekDialog(false)
+  }
 
   const toggleMealItem = (mealIndex: number, itemIndex: number) => {
     const updatedMealPlan = [...mealPlan]
     updatedMealPlan[mealIndex].items[itemIndex].completed = !updatedMealPlan[mealIndex].items[itemIndex].completed
     setMealPlan(updatedMealPlan)
+    
+    // Update current diet day
+    updateCurrentDietDay(updatedMealPlan)
+    
+    // Auto-save when toggling meal items
+    autoSaveDietProgress(updatedMealPlan)
   }
-
-  const saveProgress = () => {
-    try {
-      const saveSuccess = safeSetItem("mealPlan", mealPlan);
+  
+  // Update the current diet day with new meal plan
+  const updateCurrentDietDay = (meals: Meal[]) => {
+    const dateString = currentDate.toISOString().split('T')[0]
+    const updatedDietDays = [...dietDays]
+    
+    // Find the index of the current diet day
+    const dayIndex = updatedDietDays.findIndex(day => day.date === dateString)
+    
+    if (dayIndex >= 0) {
+      // Update existing day
+      updatedDietDays[dayIndex].meals = meals
       
-      // Update daily history with today's data
-      const today = new Date().toISOString().split('T')[0]
-      const updatedHistory = [...dailyHistory]
-      const todayIndex = updatedHistory.findIndex(day => day.date === today)
+      // Check if all meals are completed
+      const allCompleted = meals.every(meal => 
+        meal.items.every(item => item.completed)
+      )
       
-      const todayEntry = {
-        date: today,
+      updatedDietDays[dayIndex].completed = allCompleted
+    } else {
+      // Add new day
+      updatedDietDays.push({
+        date: dateString,
+        meals: meals,
+        completed: false
+      })
+    }
+    
+    setDietDays(updatedDietDays)
+    safeSetItem("dietDays", updatedDietDays)
+  }
+  
+  // Function to update diet history with current day's data
+  const updateDietHistory = (meals: Meal[]) => {
+    const dateString = currentDate.toISOString().split('T')[0]
+    
+    // Calculate today's consumed macros
+    const consumedCalories = meals.reduce((sum, meal) => 
+      sum + meal.items.reduce((mealSum, item) => 
+        mealSum + (item.completed ? item.calories : 0), 0), 0)
+    
+    const consumedProtein = meals.reduce((sum, meal) => 
+      sum + meal.items.reduce((mealSum, item) => 
+        mealSum + (item.completed ? item.protein : 0), 0), 0)
+    
+    const consumedCarbs = meals.reduce((sum, meal) => 
+      sum + meal.items.reduce((mealSum, item) => 
+        mealSum + (item.completed ? item.carbs : 0), 0), 0)
+    
+    const consumedFats = meals.reduce((sum, meal) => 
+      sum + meal.items.reduce((mealSum, item) => 
+        mealSum + (item.completed ? item.fats : 0), 0), 0)
+    
+    // Check if this date's entry already exists
+    const updatedHistory = [...dailyHistory]
+    const dayIndex = updatedHistory.findIndex(day => day.date === dateString)
+    
+    if (dayIndex >= 0) {
+      // Update existing entry
+      updatedHistory[dayIndex] = {
+        date: dateString,
         calories: Math.round(consumedCalories),
         protein: Math.round(consumedProtein),
         carbs: Math.round(consumedCarbs),
         fats: Math.round(consumedFats)
       }
+    } else {
+      // Add new entry
+      updatedHistory.push({
+        date: dateString,
+        calories: Math.round(consumedCalories),
+        protein: Math.round(consumedProtein),
+        carbs: Math.round(consumedCarbs),
+        fats: Math.round(consumedFats)
+      })
+    }
+    
+    // Sort by date (newest first)
+    updatedHistory.sort((a, b) => {
+      return parseISO(b.date).getTime() - parseISO(a.date).getTime()
+    })
+    
+    // Update state and save to localStorage
+    setDailyHistory(updatedHistory)
+    safeSetItem("dietHistory", updatedHistory)
+  }
+  
+  // Auto-save function with debounce
+  const autoSaveDietProgress = (meals: Meal[]) => {
+    // Update diet history
+    updateDietHistory(meals)
+    
+    // Show sync indicator
+    showSyncIndicator()
+  }
+
+  const saveProgress = () => {
+    try {
+      // Update current diet day
+      updateCurrentDietDay(mealPlan)
       
-      if (todayIndex >= 0) {
-        updatedHistory[todayIndex] = todayEntry
-      } else {
-        updatedHistory.push(todayEntry)
-      }
+      // Update diet history
+      updateDietHistory(mealPlan)
       
-      setDailyHistory(updatedHistory)
-      const historySuccess = safeSetItem("dietHistory", updatedHistory);
+      // Show sync indicator
+      showSyncIndicator()
       
-      if (saveSuccess && historySuccess) {
-        toast({
-          title: "Progress saved",
-          description: "Your meal progress has been saved successfully.",
-        })
-      } else {
-        throw new Error("Failed to save data to localStorage");
-      }
+      toast({
+        title: "Progress saved",
+        description: "Your diet progress has been saved successfully.",
+      })
     } catch (error) {
       console.error("Error saving diet data:", error)
       toast({
@@ -210,12 +426,23 @@ function DietPageContent() {
 
   const resetDay = () => {
     const updatedMealPlan = [...mealPlan]
-    updatedMealPlan.forEach((meal) => {
-      meal.items.forEach((item) => {
+    updatedMealPlan.forEach(meal => {
+      meal.items.forEach(item => {
         item.completed = false
       })
     })
     setMealPlan(updatedMealPlan)
+    
+    // Update current diet day
+    updateCurrentDietDay(updatedMealPlan)
+    
+    // Update diet history
+    updateDietHistory(updatedMealPlan)
+    
+    toast({
+      title: "Day reset",
+      description: "All meal items have been reset.",
+    })
   }
 
   // Calculate total calories and macros
@@ -301,16 +528,72 @@ function DietPageContent() {
   const isToday = (date: Date) => {
     return isSameDay(date, new Date())
   }
+  
+  // Check if a date has a diet plan
+  const hasDietPlan = (date: Date) => {
+    const dateString = date.toISOString().split('T')[0]
+    return dietDays.some(day => day.date === dateString)
+  }
+  
+  // Check if a date's diet is completed
+  const isDietCompleted = (date: Date) => {
+    const dateString = date.toISOString().split('T')[0]
+    const dietDay = dietDays.find(day => day.date === dateString)
+    return dietDay?.completed || false
+  }
+  
+  // Format date for display
+  const formatCurrentDate = (date: Date) => {
+    return format(date, 'EEEE, MMMM d, yyyy')
+  }
 
   return (
     <MobileLayout>
       <div className="container max-w-md mx-auto px-3 py-4">
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-xl font-bold">Diet Plan</h1>
-          <Button onClick={saveProgress} variant="ghost" size="icon" className="h-8 w-8">
-            <Save className="h-4 w-4" />
-          </Button>
+          <div className="flex items-center space-x-2">
+            <Button onClick={saveProgress} variant="outline" size="sm" className="h-8">
+              <Save className="h-4 w-4 mr-1" />
+              Save
+            </Button>
+            <Button onClick={resetDay} variant="ghost" size="sm" className="h-8">
+              Reset
+            </Button>
+          </div>
         </div>
+        
+        {/* Day navigation */}
+        <Card className="mb-4 shadow-sm">
+          <CardContent className="py-3 px-4">
+            <div className="flex items-center justify-between">
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="h-8 w-8" 
+                onClick={goToPreviousDay}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              
+              <div className="text-center">
+                <p className="text-sm font-medium">{formatCurrentDate(currentDate)}</p>
+                {isDietCompleted(currentDate) && (
+                  <p className="text-xs text-green-500">Completed</p>
+                )}
+              </div>
+              
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="h-8 w-8" 
+                onClick={goToNextDay}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList className="grid grid-cols-3 h-auto p-1">
@@ -445,7 +728,7 @@ function DietPageContent() {
                 <div className="flex justify-between items-center">
                   <CardTitle className="text-base flex items-center">
                     <Calendar className="h-4 w-4 mr-2" />
-                    Weekly Macros
+                    Weekly Diet Tracker
                   </CardTitle>
                   <div className="flex items-center space-x-1">
                     <Button 
@@ -468,13 +751,27 @@ function DietPageContent() {
                 </div>
               </CardHeader>
               <CardContent className="py-2 px-4">
-                <div className="grid grid-cols-7 gap-1 mb-2">
+                <div className="grid grid-cols-7 gap-1 mb-4">
                   {weekDays.map((day, index) => (
-                    <div key={index} className="text-center">
+                    <div 
+                      key={index} 
+                      className={`text-center p-1 rounded-md cursor-pointer ${
+                        isSameDay(day, currentDate) ? 'bg-primary/20' : 
+                        isToday(day) ? 'bg-primary/10' : 
+                        hasDietPlan(day) ? 'bg-muted/30' : ''
+                      }`}
+                      onClick={() => navigateToDate(day)}
+                    >
                       <p className="text-xs text-muted-foreground">{format(day, 'EEE')}</p>
-                      <p className={`text-xs font-medium ${isToday(day) ? 'text-primary' : ''}`}>
+                      <p className={`text-xs font-medium ${
+                        isSameDay(day, currentDate) ? 'text-primary' : 
+                        isToday(day) ? 'text-primary' : ''
+                      }`}>
                         {format(day, 'd')}
                       </p>
+                      {isDietCompleted(day) && (
+                        <div className="w-2 h-2 bg-green-500 rounded-full mx-auto mt-1"></div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -586,6 +883,40 @@ function DietPageContent() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        {/* Add a success indicator when data is synced */}
+        <div className="fixed bottom-20 right-4">
+          <div className="bg-green-500 text-white rounded-full p-1 shadow-lg opacity-0 scale-75 transform transition-all duration-300" id="sync-indicator">
+            <Check className="h-4 w-4" />
+          </div>
+        </div>
+        
+        {/* Next Week Dialog */}
+        <Dialog open={showNextWeekDialog} onOpenChange={setShowNextWeekDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Move to Next Week?</DialogTitle>
+              <DialogDescription>
+                You're about to move to the next week. Your current progress will be saved.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-4">
+              <p className="text-sm">
+                Moving to the next week will create a new diet plan for the upcoming days.
+                All your historical data will be preserved.
+              </p>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowNextWeekDialog(false)}>
+                Cancel
+              </Button>
+              <Button onClick={moveToNextWeek}>
+                <ArrowRight className="h-4 w-4 mr-2" />
+                Continue to Next Week
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </MobileLayout>
   )
