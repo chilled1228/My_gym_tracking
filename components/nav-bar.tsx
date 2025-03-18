@@ -2,9 +2,19 @@
 
 import { usePathname } from "next/navigation"
 import Link from "next/link"
-import { Home, Dumbbell, Utensils, BarChart, PieChart, Settings, LucideIcon } from "lucide-react"
+import { Home, Dumbbell, Utensils, BarChart, PieChart, User, LucideIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { motion } from "framer-motion"
+import { useAuth } from "@/contexts/auth-context"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Button } from "./ui/button"
+import { LogOut } from "lucide-react"
 
 interface NavItem {
   href: string
@@ -18,11 +28,11 @@ const navItems: NavItem[] = [
   { href: "/diet", icon: Utensils, label: "Diet" },
   { href: "/progress", icon: BarChart, label: "Progress" },
   { href: "/macros", icon: PieChart, label: "Macros" },
-  { href: "/settings", icon: Settings, label: "Settings" },
 ]
 
 export function NavBar() {
   const pathname = usePathname()
+  const { user, signInWithGoogle, signOut } = useAuth()
   
   const isActive = (path: string) => {
     // Exact match for home page
@@ -85,6 +95,38 @@ export function NavBar() {
               </Link>
             )
           })}
+          
+          {/* Profile/Login Button */}
+          <div className="flex flex-col items-center justify-center w-full h-full text-[10px] sm:text-xs py-2">
+            {user ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="h-auto p-0 bg-transparent relative flex flex-col items-center">
+                    <Avatar className="h-5 w-5 mb-1">
+                      <AvatarImage src={user.user_metadata.avatar_url} />
+                      <AvatarFallback className="text-[8px]">{user.email?.charAt(0).toUpperCase()}</AvatarFallback>
+                    </Avatar>
+                    <span className="text-muted-foreground">Profile</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={signOut} className="cursor-pointer">
+                    <LogOut className="mr-2 h-4 w-4" />
+                    <span>Sign out</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Button 
+                variant="ghost" 
+                className="h-auto p-0 bg-transparent relative flex flex-col items-center"
+                onClick={signInWithGoogle}
+              >
+                <User className="h-5 w-5 mb-1 text-muted-foreground" />
+                <span className="text-muted-foreground">Sign In</span>
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </nav>
