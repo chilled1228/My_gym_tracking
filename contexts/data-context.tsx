@@ -150,7 +150,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     
     // Store database status in Supabase
     try {
-      await fetch('/api/database-status-store', {
+      const response = await fetch('/api/database-status-store', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -160,6 +160,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
         },
         body: JSON.stringify({ status })
       })
+      
+      // Handle response even if it's a "success with issues" (like session expiry)
+      const data = await response.json()
+      if (!response.ok && !data.tempStorage) {
+        console.error('Error response from database status store:', data.message)
+      }
     } catch (error) {
       console.error('Error storing database status:', error)
     }

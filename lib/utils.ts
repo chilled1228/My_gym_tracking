@@ -538,6 +538,20 @@ export async function safeCopyToClipboard(text: string): Promise<boolean> {
  */
 export function getLocalDateString(date: Date = new Date()): string {
   try {
+    // Ensure the date is valid
+    if (!(date instanceof Date) || isNaN(date.getTime())) {
+      console.error("Invalid date object provided to getLocalDateString:", date);
+      // Fall back to current date
+      date = new Date();
+    }
+    
+    // Make sure we're not in the future
+    const now = new Date();
+    if (date > now) {
+      console.warn("Future date detected in getLocalDateString, using current date instead");
+      date = now;
+    }
+    
     // Extract year, month, and day in user's local timezone
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');

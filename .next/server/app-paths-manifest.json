@@ -1,1 +1,7 @@
-{}
+{
+  "/api/database-status/route": "app/api/database-status/route.js",
+  "/api/database-status-store/route": "app/api/database-status-store/route.js",
+  "/auth/callback/route": "app/auth/callback/route.js",
+  "/page": "app/page.js",
+  "/diet/page": "app/diet/page.js"
+}

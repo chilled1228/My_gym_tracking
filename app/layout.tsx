@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { ThemeProvider } from '@/components/theme-provider'
 import { DataProvider } from '@/contexts/data-context'
+import { AuthProvider } from '@/contexts/auth-context'
 import { DatabaseStatusProvider } from '@/components/database-status-provider'
 import { Toaster } from 'sonner'
 
@@ -34,11 +35,13 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <DataProvider>
-            <DatabaseStatusProvider>
-              {children}
-            </DatabaseStatusProvider>
-          </DataProvider>
+          <AuthProvider>
+            <DataProvider>
+              <DatabaseStatusProvider>
+                {children}
+              </DatabaseStatusProvider>
+            </DataProvider>
+          </AuthProvider>
           <Toaster position="top-center" />
         </ThemeProvider>
       </body>

@@ -97,17 +97,19 @@ async function tableExists(tableName: string): Promise<boolean> {
 // User management - for future authentication implementation
 export async function getCurrentUserId(): Promise<string | null> {
   try {
-    // First try to get authenticated user
+    // First try to get authenticated user from Supabase
     const { data: { user } } = await supabase.auth.getUser();
     
     if (user?.id) {
+      console.log('Using authenticated user ID:', user.id);
       return user.id;
     }
     
-    // Check for existing anonymous ID in localStorage
+    // If no authenticated user, check for locally stored anonymous ID
     if (typeof window !== 'undefined') {
       const storedAnonymousId = localStorage.getItem('anonymousUserId');
       if (storedAnonymousId) {
+        console.log('Using stored anonymous ID:', storedAnonymousId);
         return storedAnonymousId;
       }
       
@@ -120,7 +122,7 @@ export async function getCurrentUserId(): Promise<string | null> {
     
     // Server-side or no localStorage, generate a temporary ID
     const tempId = crypto.randomUUID ? crypto.randomUUID() : uuidv4();
-    console.log('Created temporary anonymous ID (no localStorage):', tempId);
+    console.log('Created temporary anonymous ID (server-side):', tempId);
     return tempId;
     
   } catch (error) {
