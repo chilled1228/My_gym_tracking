@@ -9,6 +9,8 @@ import type {
   MealItem
 } from './supabase';
 import { v4 as uuidv4 } from 'uuid';
+import { createClient } from '@supabase/supabase-js';
+import { getLocalDateString } from './utils';
 
 // Save status callback type
 export type SaveStatusCallback = {
@@ -57,22 +59,8 @@ async function tableExists(tableName: string): Promise<boolean> {
   try {
     console.log(`Checking if table ${tableName} exists...`);
     
-    // First try to get table information from Postgres information_schema
-    const { data: tableInfo, error: schemaError } = await supabase
-      .from('information_schema.tables')
-      .select('table_name')
-      .eq('table_name', tableName)
-      .eq('table_schema', 'public')
-      .limit(1);
-    
-    // If we can access information_schema and find the table, it exists
-    if (!schemaError && tableInfo && tableInfo.length > 0) {
-      console.log(`Table ${tableName} found in information_schema`);
-      return true;
-    }
-    
-    // If we can't access information_schema (common with restricted permissions),
-    // try to select from the table directly
+    // Try to select from the table directly instead of querying information_schema
+    // This is more likely to work with restricted permissions
     const { error } = await supabase
       .from(tableName)
       .select('count')
@@ -848,37 +836,30 @@ export async function getMacrosForDate(date: string): Promise<DailyMacros | null
   return data || null;
 }
 
-// Add these helper functions after the imports
 // Helper function to create a detailed error object
 function createDetailedError(message: string, originalError?: any): Error {
   const detailedError = new Error(message);
   
   // Add timestamp to the error
-  (detailedError as any).timestamp = new Date().toISOString();
+  (detailedError as any).timestamp = getLocalDateString(new Date());
   
   if (originalError) {
-    // Add original error details to the error object
     (detailedError as any).originalError = originalError;
     
-    // Extract Supabase specific error fields if they exist
-    if (typeof originalError === 'object') {
-      (detailedError as any).supabaseErrorCode = originalError.code;
-      (detailedError as any).supabaseErrorMessage = originalError.message;
-      (detailedError as any).supabaseErrorDetails = originalError.details;
-      (detailedError as any).supabaseErrorHint = originalError.hint;
-      (detailedError as any).supabaseErrorStatus = originalError.status;
+    // If the original error has a code, add it to the error
+    if (originalError.code) {
+      (detailedError as any).code = originalError.code;
     }
     
-    // Log the detailed error for debugging
-    console.debug('Created detailed error:', {
-      message: message,
-      originalErrorType: typeof originalError,
-      originalErrorMessage: originalError instanceof Error ? originalError.message : undefined,
-      supabaseErrorCode: (detailedError as any).supabaseErrorCode,
-      supabaseErrorMessage: (detailedError as any).supabaseErrorMessage,
-      supabaseErrorDetails: (detailedError as any).supabaseErrorDetails,
-      timestamp: (detailedError as any).timestamp
-    });
+    // If the original error has a name, add it to the error
+    if (originalError.name) {
+      (detailedError as any).errorType = originalError.name;
+    }
+    
+    // If the original error has details, add them to the error
+    if (originalError.details) {
+      (detailedError as any).details = originalError.details;
+    }
   }
   
   return detailedError;
