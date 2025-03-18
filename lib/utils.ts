@@ -1,5 +1,6 @@
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
+import { format, addDays, parseISO } from "date-fns"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -526,5 +527,68 @@ export async function safeCopyToClipboard(text: string): Promise<boolean> {
   } catch (error) {
     console.error('Failed to copy text: ', error);
     return false;
+  }
+}
+
+/**
+ * A function to generate a consistent date string regardless of timezone or device
+ * Uses the client's local timezone settings for reliable date representation
+ * @param date Date object to convert to string (defaults to current date)
+ * @returns String in YYYY-MM-DD format representing the date in the user's local timezone
+ */
+export function getLocalDateString(date: Date = new Date()): string {
+  try {
+    // Extract year, month, and day in user's local timezone
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    
+    // Return YYYY-MM-DD format
+    return `${year}-${month}-${day}`;
+  } catch (error) {
+    // Fallback in case of any issues with the Date object
+    console.error("Error formatting date:", error);
+    // Return today's date as fallback using traditional method but with local timezone offset
+    const fallbackDate = new Date();
+    const tzOffset = fallbackDate.getTimezoneOffset() * 60000; // offset in milliseconds
+    const localDate = new Date(fallbackDate.getTime() - tzOffset);
+    return localDate.toISOString().split('T')[0];
+  }
+}
+
+/**
+ * Function to get today's date in user's local timezone as YYYY-MM-DD
+ * Ensures consistent representation of "today" across different devices and browsers
+ * @returns Today's date as a string in YYYY-MM-DD format
+ */
+export function getTodayString(): string {
+  return getLocalDateString(new Date());
+}
+
+/**
+ * Creates a Date object from a YYYY-MM-DD string, preserving the local timezone
+ * This ensures that dates are interpreted consistently across devices
+ * @param dateString Date string in YYYY-MM-DD format
+ * @returns Date object representing the date in the local timezone
+ */
+export function dateFromLocalString(dateString: string): Date {
+  try {
+    // Parse the YYYY-MM-DD format into year, month, day components
+    const [year, month, day] = dateString.split('-').map(Number);
+    
+    // Create a new date with components and local timezone
+    // Note: month is 0-indexed in JavaScript Date
+    const date = new Date(year, month - 1, day);
+    
+    // Check if the date is valid
+    if (isNaN(date.getTime())) {
+      throw new Error(`Invalid date string: ${dateString}`);
+    }
+    
+    return date;
+  } catch (error) {
+    console.error(`Error parsing date string "${dateString}":`, error);
+    // Return current date as fallback
+    return new Date();
   }
 }
