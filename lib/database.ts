@@ -97,33 +97,50 @@ async function tableExists(tableName: string): Promise<boolean> {
 // User management - for future authentication implementation
 export async function getCurrentUserId(): Promise<string | null> {
   try {
+    // First try to get authenticated user
     const { data: { user } } = await supabase.auth.getUser();
     
     if (user?.id) {
       return user.id;
     }
     
-    // If no authenticated user, check for fallback ID in browser environment
+    // Check for existing anonymous ID in localStorage
     if (typeof window !== 'undefined') {
-      const fallbackUserId = localStorage.getItem('fallbackUserId');
-      if (fallbackUserId) {
-        console.log('Using fallback user ID:', fallbackUserId);
-        return fallbackUserId;
+      const storedAnonymousId = localStorage.getItem('anonymousUserId');
+      if (storedAnonymousId) {
+        return storedAnonymousId;
       }
       
-      // If no fallback ID exists, create one
-      if (!fallbackUserId) {
-        const newFallbackId = crypto.randomUUID ? crypto.randomUUID() : uuidv4();
-        localStorage.setItem('fallbackUserId', newFallbackId);
-        console.log('Created new fallback user ID:', newFallbackId);
-        return newFallbackId;
-      }
+      // If no stored ID, generate a new one and store it
+      const newAnonymousId = crypto.randomUUID ? crypto.randomUUID() : uuidv4();
+      localStorage.setItem('anonymousUserId', newAnonymousId);
+      console.log('Created and stored new anonymous user ID:', newAnonymousId);
+      return newAnonymousId;
     }
     
-    return null;
+    // Server-side or no localStorage, generate a temporary ID
+    const tempId = crypto.randomUUID ? crypto.randomUUID() : uuidv4();
+    console.log('Created temporary anonymous ID (no localStorage):', tempId);
+    return tempId;
+    
   } catch (error) {
     console.error('Error getting current user ID:', error);
-    return null;
+    
+    // Try localStorage as fallback if available
+    if (typeof window !== 'undefined') {
+      const storedAnonymousId = localStorage.getItem('anonymousUserId');
+      if (storedAnonymousId) {
+        return storedAnonymousId;
+      }
+      
+      // Last resort: new ID and store it
+      const fallbackId = crypto.randomUUID ? crypto.randomUUID() : uuidv4();
+      localStorage.setItem('anonymousUserId', fallbackId);
+      return fallbackId;
+    }
+    
+    // Final fallback
+    return crypto.randomUUID ? crypto.randomUUID() : uuidv4();
   }
 }
 
@@ -281,18 +298,37 @@ export async function getWorkoutForDate(date: string): Promise<WorkoutHistory | 
     return null;
   }
 
-  const { data, error } = await supabase
-    .from('workout_history')
-    .select('*')
-    .eq('date', date)
-    .single();
-  
-  if (error && error.code !== 'PGRST116') {
-    console.error(`Error fetching workout for date ${date}:`, error);
+  try {
+    // Validate the date format - should be YYYY-MM-DD
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      console.error(`Invalid date format for getWorkoutForDate: ${date}. Expected YYYY-MM-DD.`);
+      return null;
+    }
+
+    // Validate that the date is not in the future
+    const dateObj = new Date(date);
+    const now = new Date();
+    if (dateObj > now) {
+      console.warn(`Future date detected in getWorkoutForDate: ${date}. Returning null.`);
+      return null;
+    }
+
+    const { data, error } = await supabase
+      .from('workout_history')
+      .select('*')
+      .eq('date', date)
+      .single();
+    
+    if (error && error.code !== 'PGRST116') {
+      console.error(`Error fetching workout for date ${date}:`, error);
+      return null;
+    }
+    
+    return data || null;
+  } catch (error) {
+    console.error(`Unexpected error in getWorkoutForDate for date ${date}:`, error);
     return null;
   }
-  
-  return data || null;
 }
 
 export async function saveWorkoutHistory(
@@ -583,18 +619,65 @@ export async function getDietForDate(date: string): Promise<DietDay | null> {
     return null;
   }
 
-  const { data, error } = await supabase
-    .from('diet_history')
-    .select('*')
-    .eq('date', date)
-    .single();
-  
-  if (error && error.code !== 'PGRST116') {
-    console.error(`Error fetching diet for date ${date}:`, error);
+  try {
+    // Validate the date format - should be YYYY-MM-DD
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      console.error(`Invalid date format for getDietForDate: ${date}. Expected YYYY-MM-DD.`);
+      return null;
+    }
+
+    // Validate that the date is not in the future
+    const dateObj = new Date(date);
+    const now = new Date();
+    if (dateObj > now) {
+      console.warn(`Future date detected in getDietForDate: ${date}. Returning null without making API call.`);
+      return null;
+    }
+
+    // Get the current user ID
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      console.warn('No user ID available for getDietForDate');
+      return null;
+    }
+
+    // Make the API call with proper headers and error handling
+    const { data, error } = await supabase
+      .from('diet_history')
+      .select('*')
+      .eq('date', date)
+      .eq('user_id', userId)
+      .single();
+    
+    if (error) {
+      if (error.code === 'PGRST116') {
+        // No rows returned - this is expected for dates without data
+        return null;
+      }
+      
+      console.error(`Error fetching diet for date ${date}:`, error);
+      return null;
+    }
+    
+    if (!data) {
+      return null;
+    }
+
+    // Ensure the data matches our DietDay type
+    const dietDay: DietDay = {
+      id: data.id,
+      user_id: data.user_id,
+      date: data.date,
+      meals: Array.isArray(data.meals) ? data.meals : [],
+      completed: !!data.completed,
+      created_at: data.created_at
+    };
+
+    return dietDay;
+  } catch (error) {
+    console.error(`Unexpected error in getDietForDate for date ${date}:`, error);
     return null;
   }
-  
-  return data || null;
 }
 
 export async function saveDietDay(
@@ -621,76 +704,43 @@ export async function saveDietDay(
       return false;
     }
 
-    // Add user_id if not present
-    if (!dietDay.user_id) {
-      const userId = await getCurrentUserId();
-      if (userId) {
-        dietDay.user_id = userId;
-      } else {
-        // Check if we're in a browser environment
-        if (typeof window !== 'undefined') {
-          // Use a fallback user ID from localStorage if available
-          const fallbackUserId = localStorage.getItem('fallbackUserId');
-          
-          if (fallbackUserId) {
-            dietDay.user_id = fallbackUserId;
-            console.log('Using fallback user ID for diet day:', fallbackUserId);
-          } else {
-            // Generate a new fallback user ID and store it
-            const newFallbackId = crypto.randomUUID ? crypto.randomUUID() : uuidv4();
-            localStorage.setItem('fallbackUserId', newFallbackId);
-            dietDay.user_id = newFallbackId;
-            console.log('Created new fallback user ID for diet day:', newFallbackId);
-          }
-        } else {
-          // We're on the server side, use a temporary ID
-          dietDay.user_id = uuidv4();
-          console.log('Using temporary user ID for diet day on server side');
-        }
-      }
+    // Validate that the date is not in the future
+    const dateObj = new Date(dietDay.date);
+    const now = new Date();
+    if (dateObj > now) {
+      const errorMsg = `Cannot save diet for future date: ${dietDay.date}`;
+      console.warn(errorMsg);
+      statusCallbacks?.onError?.(createDetailedError(errorMsg));
+      return false;
     }
 
-    // Ensure meals is an array
-    if (!Array.isArray(dietDay.meals)) {
-      dietDay.meals = [];
-      console.warn('Diet day meals was not an array, setting to empty array');
+    // Get or create user ID
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      const errorMsg = 'No user ID available for saving diet day';
+      console.error(errorMsg);
+      statusCallbacks?.onError?.(createDetailedError(errorMsg));
+      return false;
     }
-    
-    // Sanitize meals array to ensure all properties are in the correct format
-    const sanitizedMeals = dietDay.meals.map(meal => {
-      if (!meal) return null;
-      
-      // Ensure meal has required properties
-      const sanitizedMeal: Meal = {
-        time: meal.time || '',
-        name: meal.name || '',
-        items: []
-      };
-      
-      // Sanitize meal items
-      if (Array.isArray(meal.items)) {
-        sanitizedMeal.items = meal.items.map(item => {
-          if (!item) return null;
-          
-          // Create a sanitized meal item with all required properties
-          return {
-            name: item.name || '',
-            completed: !!item.completed,
-            calories: Number(item.calories) || 0,
-            protein: Number(item.protein) || 0,
-            carbs: Number(item.carbs) || 0,
-            fats: Number(item.fats) || 0
-          } as MealItem;
-        }).filter((item): item is MealItem => item !== null); // Remove null items and clarify type
-      }
-      
-      return sanitizedMeal;
-    }).filter((meal): meal is Meal => meal !== null); // Remove null meals and clarify type
 
-    // Create a sanitized copy of the diet day to ensure it's safe for Supabase
+    // Ensure meals is an array and sanitize the data
+    const sanitizedMeals = Array.isArray(dietDay.meals) ? dietDay.meals.map(meal => ({
+      time: meal.time || '',
+      name: meal.name || '',
+      items: Array.isArray(meal.items) ? meal.items.map(item => ({
+        name: item.name || '',
+        completed: !!item.completed,
+        calories: Number(item.calories) || 0,
+        protein: Number(item.protein) || 0,
+        carbs: Number(item.carbs) || 0,
+        fats: Number(item.fats) || 0
+      })) : []
+    })) : [];
+
+    // Create a sanitized copy of the diet day
     const sanitizedDietDay = {
       id: dietDay.id || uuidv4(),
-      user_id: dietDay.user_id,
+      user_id: userId,
       date: dietDay.date,
       meals: sanitizedMeals,
       completed: !!dietDay.completed
@@ -705,74 +755,17 @@ export async function saveDietDay(
       completed: sanitizedDietDay.completed
     });
 
-    try {
-      // Check Supabase connection before proceeding
-      console.log('Testing Supabase connection before diet day save...');
-      const { connected, details, error: connectionError } = await checkSupabaseConnection();
-      
-      if (!connected) {
-        const errorMsg = `Failed to connect to Supabase: ${details || 'Unknown error'}`;
-        console.error(errorMsg, connectionError);
-        statusCallbacks?.onError?.(createDetailedError(errorMsg, connectionError));
-        return false;
-      }
-      
-      console.log('Supabase connection successful, proceeding with diet day save');
-      
-      // Try to do the upsert
-      const response = await supabase
-        .from('diet_history')
-        .upsert(sanitizedDietDay, { 
-          onConflict: 'date,user_id',
-          ignoreDuplicates: false
-        });
-      
-      // Check if response is undefined or null
-      if (!response) {
-        const errorMsg = 'No response received from Supabase';
-        console.error(errorMsg);
-        statusCallbacks?.onError?.(createDetailedError(errorMsg));
-        return false;
-      }
-      
-      // Destructure after verifying response exists
-      const { error, status, statusText, data } = response;
-      
-      // Log full response for debugging
-      console.log('Supabase response:', {
-        status,
-        statusText,
-        hasData: !!data,
-        hasError: !!error,
-        errorDetails: error ? JSON.stringify(error) : 'none'
+    // Save to Supabase with proper error handling
+    const { error } = await supabase
+      .from('diet_history')
+      .upsert(sanitizedDietDay, { 
+        onConflict: 'date,user_id',
+        ignoreDuplicates: false
       });
-      
-      if (error) {
-        const detailedError = handleSupabaseError('Saving diet day', error);
-        console.error('Error saving diet day:', detailedError);
-        statusCallbacks?.onError?.(detailedError);
-        return false;
-      }
-    } catch (supabaseError) {
-      // Enhanced error logging for exception cases
-      console.error('Exception during Supabase diet day save. Error type:', typeof supabaseError);
-      
-      if (supabaseError === null || supabaseError === undefined) {
-        console.error('Caught null or undefined error in saveDietDay');
-        statusCallbacks?.onError?.(createDetailedError('Unknown error occurred while saving diet day - received null/undefined error'));
-        return false;
-      }
-      
-      // Log raw error object for debugging
-      try {
-        console.error('Raw error object:', JSON.stringify(supabaseError));
-      } catch (jsonError) {
-        console.error('Error is not JSON serializable:', supabaseError);
-      }
-      
-      const detailedError = handleSupabaseError('Saving diet day', supabaseError);
-      console.error('Exception during Supabase diet day save:', detailedError);
-      statusCallbacks?.onError?.(detailedError);
+    
+    if (error) {
+      console.error('Error saving diet day:', error);
+      statusCallbacks?.onError?.(error);
       return false;
     }
     
@@ -780,10 +773,8 @@ export async function saveDietDay(
     statusCallbacks?.onSuccess?.();
     return true;
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error saving diet day';
-    const detailedError = createDetailedError(errorMessage, error);
-    console.error('Error saving diet day:', detailedError);
-    statusCallbacks?.onError?.(detailedError);
+    console.error('Error saving diet day:', error);
+    statusCallbacks?.onError?.(error);
     return false;
   }
 }
@@ -822,18 +813,37 @@ export async function getMacrosForDate(date: string): Promise<DailyMacros | null
     return null;
   }
 
-  const { data, error } = await supabase
-    .from('macro_history')
-    .select('*')
-    .eq('date', date)
-    .single();
-  
-  if (error && error.code !== 'PGRST116') {
-    console.error(`Error fetching macros for date ${date}:`, error);
+  try {
+    // Validate the date format - should be YYYY-MM-DD
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      console.error(`Invalid date format for getMacrosForDate: ${date}. Expected YYYY-MM-DD.`);
+      return null;
+    }
+
+    // Validate that the date is not in the future
+    const dateObj = new Date(date);
+    const now = new Date();
+    if (dateObj > now) {
+      console.warn(`Future date detected in getMacrosForDate: ${date}. Returning null.`);
+      return null;
+    }
+
+    const { data, error } = await supabase
+      .from('macro_history')
+      .select('*')
+      .eq('date', date)
+      .single();
+    
+    if (error && error.code !== 'PGRST116') {
+      console.error(`Error fetching macros for date ${date}:`, error);
+      return null;
+    }
+    
+    return data || null;
+  } catch (error) {
+    console.error(`Unexpected error in getMacrosForDate for date ${date}:`, error);
     return null;
   }
-  
-  return data || null;
 }
 
 // Helper function to create a detailed error object
@@ -867,8 +877,8 @@ function createDetailedError(message: string, originalError?: any): Error {
 
 // Helper function to handle Supabase errors
 function handleSupabaseError(operation: string, error: any): Error {
+  // If error is undefined, create a default error
   if (!error) {
-    console.warn(`Empty error object received during ${operation}`);
     return createDetailedError(`Empty error object received during ${operation}. Check Supabase configuration and network connectivity.`);
   }
   
@@ -992,26 +1002,9 @@ export async function saveMacros(
           macros.user_id = userId;
           console.log('Using authenticated user ID for macros:', userId);
         } else {
-          // Check if we're in a browser environment
-          if (typeof window !== 'undefined') {
-            // Use a fallback user ID from localStorage if available
-            const fallbackUserId = localStorage.getItem('fallbackUserId');
-            
-            if (fallbackUserId) {
-              macros.user_id = fallbackUserId;
-              console.log('Using fallback user ID for macros:', fallbackUserId);
-            } else {
-              // Generate a new fallback user ID and store it
-              const newFallbackId = crypto.randomUUID ? crypto.randomUUID() : uuidv4();
-              localStorage.setItem('fallbackUserId', newFallbackId);
-              macros.user_id = newFallbackId;
-              console.log('Created new fallback user ID for macros:', newFallbackId);
-            }
-          } else {
-            // We're on the server side, use a temporary ID
-            macros.user_id = uuidv4();
-            console.log('Using temporary user ID for macros on server side');
-          }
+          // Generate a new ID if getCurrentUserId fails
+          macros.user_id = crypto.randomUUID ? crypto.randomUUID() : uuidv4();
+          console.log('Created new user ID for macros:', macros.user_id);
         }
       } catch (userIdError) {
         console.error('Error getting user ID for macros:', userIdError);
@@ -1106,5 +1099,112 @@ export async function saveMacros(
       : JSON.stringify(error, null, 2));
     statusCallbacks?.onError?.(detailedError);
     return false;
+  }
+}
+
+// Function to clear all progress data from Supabase
+export async function clearAllProgressData(): Promise<{
+  success: boolean;
+  message: string;
+  details?: { [key: string]: any };
+}> {
+  try {
+    console.log('Starting to clear all progress data from Supabase...');
+    
+    // Tables to clear
+    const tables = [
+      'workout_history',
+      'diet_history',
+      'macro_history'
+    ];
+    
+    const results: { [key: string]: any } = {};
+    
+    // Check connection first
+    const connectionStatus = await checkSupabaseConnection();
+    if (!connectionStatus.connected) {
+      console.error('Cannot clear progress: Supabase connection failed');
+      return {
+        success: false,
+        message: 'Failed to connect to Supabase',
+        details: connectionStatus
+      };
+    }
+    
+    // Clear each table
+    for (const table of tables) {
+      console.log(`Clearing table: ${table}`);
+      
+      try {
+        // Check if table exists first
+        if (!await tableExists(table)) {
+          console.warn(`Table ${table} does not exist, skipping`);
+          results[table] = { success: true, message: 'Table does not exist, skipping' };
+          continue;
+        }
+        
+        // Delete all data
+        const { data, error } = await supabase
+          .from(table)
+          .delete()
+          .is('id', null) // This is a trick - first try with a condition that won't match
+          .select('count');
+          
+        if (error) {
+          // Try the alternative approach
+          console.log(`Using alternative delete approach for ${table}`);
+          const deleteResult = await supabase
+            .from(table)
+            .delete()
+            .neq('id', null);
+            
+          if (deleteResult.error) {
+            console.error(`Error clearing table ${table}:`, deleteResult.error);
+            results[table] = { 
+              success: false, 
+              error: deleteResult.error.message,
+              code: deleteResult.error.code
+            };
+          } else {
+            console.log(`Successfully cleared table: ${table}`);
+            results[table] = { success: true };
+          }
+        } else {
+          console.log(`Successfully cleared table: ${table}`);
+          results[table] = { success: true };
+        }
+      } catch (tableError) {
+        console.error(`Error processing table ${table}:`, tableError);
+        results[table] = { 
+          success: false, 
+          error: tableError instanceof Error ? tableError.message : String(tableError)
+        };
+      }
+    }
+    
+    // Check if any operations failed
+    const hasErrors = Object.values(results).some(result => !result.success);
+    
+    if (hasErrors) {
+      return {
+        success: false,
+        message: 'Some tables could not be cleared. Check details for more information.',
+        details: results
+      };
+    }
+    
+    return {
+      success: true,
+      message: 'Successfully cleared all progress data',
+      details: results
+    };
+    
+  } catch (error) {
+    console.error('Error clearing progress data:', error);
+    return {
+      success: false,
+      message: `Failed to clear progress data: ${error instanceof Error ? error.message : String(error)}`,
+      details: { error: error instanceof Error ? error.stack : String(error) }
+    };
   }
 } 

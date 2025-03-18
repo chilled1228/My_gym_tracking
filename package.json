@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "clear-progress": "ts-node scripts/clear-progress.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
@@ -37,6 +38,7 @@
     "@radix-ui/react-toggle": "^1.1.1",
     "@radix-ui/react-toggle-group": "^1.1.1",
     "@radix-ui/react-tooltip": "^1.1.6",
+    "@supabase/auth-helpers-nextjs": "^0.10.0",
     "@supabase/supabase-js": "^2.49.1",
     "@types/uuid": "^10.0.0",
     "autoprefixer": "^10.4.20",
@@ -64,11 +66,13 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/lodash": "^4.17.16",
     "@types/node": "^20",
     "@types/react": "^18.2.55",
     "@types/react-dom": "^18.2.19",
     "postcss": "^8",
     "tailwindcss": "^3.4.17",
+    "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
   }
 }

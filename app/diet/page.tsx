@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, Suspense } from "react"
+import { useState, useEffect, Suspense, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Save, PieChart, Calendar, ChevronLeft, ChevronRight, Check, ArrowRight, Utensils, RotateCcw, MoreHorizontal, AlertTriangle } from "lucide-react"
@@ -37,6 +37,10 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
 import { getLocalDateString, getTodayString, dateFromLocalString } from "@/lib/utils"
+import debounceImport from "lodash/debounce"
+
+// Use imported debounce as our debounce function
+const debounce = debounceImport;
 
 interface DailyMacros {
   id?: string
@@ -99,6 +103,15 @@ function DietPageContent() {
   
   // Reference to track initial mount for consistency check
   const isInitialMount = { current: true };
+  
+  // Create a debounced version of saveDailyMacrosForDashboard
+  const debouncedSaveMacros = debounce(async (meals: Meal[], date: string) => {
+    try {
+      await saveDailyMacrosForDashboard(meals, date);
+    } catch (error) {
+      console.error('Error in debounced macro save:', error);
+    }
+  }, 1000);
   
   // Check plan display consistency on mount but don't repeat excessively
   useEffect(() => {
@@ -176,53 +189,17 @@ function DietPageContent() {
   useEffect(() => {
     // If we have a current diet day, force refresh the macroHistory data
     if (currentDietDay && currentDietDay.meals) {
-      // Force save the daily macros to ensure dashboard is updated immediately
-      try {
-        // Use promise-based handling with explicit error management
-        saveDailyMacrosForDashboard(currentDietDay.meals, currentDietDay.date)
-          .then(result => {
-            if (!result) {
-              console.warn("Failed to save macros on initial load, but will continue");
-            }
-          })
-          .catch(error => {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            console.error("Error saving macros on initial load:", errorMessage, error);
-          });
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        console.error("Exception when trying to save macros on initial load:", errorMessage, error);
-      }
-    }
-  }, [currentDietDay]);
-  
-  // Handle diet plan changes
-  useEffect(() => {
-    console.log("Diet plan changed to:", currentDietPlan?.name);
-    
-    if (!currentDietPlan) return;
-    
-    // When the diet plan changes, we need to check if we have existing progress for today
-    const dateString = getLocalDateString(currentDate);
-    
-    // Check if we have existing progress for this date in history
-    const existingDiet = dietHistory.find(
-      (diet) => diet.date === dateString
-    );
-    
-    if (existingDiet) {
-      // If we have existing progress, use it
-      console.log("Found existing diet progress for today, using it instead of creating new");
-      setCurrentDietDay(existingDiet);
-    } else {
-      // If no existing progress, create a new diet day with the current plan
-      console.log("No existing diet progress found, creating new diet day");
+      // Create a unique key for the currentDietDay to prevent multiple identical saves
+      const dietKey = `${currentDietDay.id || ''}-${currentDietDay.date}`;
       
-      // Create a new diet day with the current plan
-      createNewDietDay(dateString);
+      // Use the debounced version to prevent too many saves
+      debouncedSaveMacros(currentDietDay.meals, currentDietDay.date);
     }
-  }, [currentDietPlan, currentDate, dietHistory]);
+  }, [currentDietDay?.id, currentDietDay?.date]); // Only re-run when ID or date changes
   
+  // Add a ref to track if we're already loading a specific date
+  const loadingDateRef = useRef<string | null>(null);
+
   // Update current diet when date changes or diet history changes
   useEffect(() => {
     // Skip if we don't have a diet plan yet
@@ -230,11 +207,45 @@ function DietPageContent() {
     
     const dateString = getLocalDateString(currentDate);
     
+    // Skip if we're already loading this date
+    if (loadingDateRef.current === dateString) {
+      return;
+    }
+    
     const loadDietForDate = async () => {
+      // Set the ref to the current date we're loading
+      loadingDateRef.current = dateString;
+      
       setIsLoading(true);
       try {
         // Use timezone-aware function for date string
-        const dateString = getLocalDateString(currentDate);
+        console.log("Loading diet for date:", dateString);
+        
+        // Validate date format - should be YYYY-MM-DD
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+          console.error(`Invalid date format: ${dateString}. Expected YYYY-MM-DD.`);
+          createNewDietDay(getTodayString());
+          setIsLoading(false);
+          loadingDateRef.current = null;
+          return;
+        }
+        
+        // Prevent loading future dates
+        const dateObj = new Date(dateString);
+        const now = new Date();
+        if (dateObj > now) {
+          console.warn(`Future date detected in loadDietForDate: ${dateString}. Using today's date instead.`);
+          // Reset to today and exit the function
+          setCurrentDate(new Date());
+          toast({
+            title: "Cannot View Future",
+            description: "Future dates are not available. Showing today instead.",
+            variant: "destructive",
+          });
+          setIsLoading(false);
+          loadingDateRef.current = null;
+          return;
+        }
         
         // Try to get diet from Supabase first
         const dietFromSupabase = await getDietForDate(dateString);
@@ -290,7 +301,7 @@ function DietPageContent() {
     };
     
     loadDietForDate();
-  }, [currentDate, dietHistory, currentDietPlan, getDietForDate]);
+  }, [currentDate, currentDietPlan]);
   
   // Create a new diet day for the current date
   const createNewDietDay = (dateString: string) => {
@@ -319,15 +330,15 @@ function DietPageContent() {
     return newDietDay;
   };
   
-  // Navigation functions
+  // Navigate to a specific date
   const navigateToDate = (date: Date) => {
-    // First, save the current diet day if it exists
-    if (currentDietDay && currentDietDay.meals) {
-      // Instead of calling autoSaveDietProgress, directly update the history
-      updateDietHistory(currentDietDay.meals, currentDietDay.date);
-    }
+    // Use our new date validation handler
+    handleDateChange(date);
     
+    // The rest of the logic will run after setCurrentDate is called
     const dateString = getLocalDateString(date);
+    
+    // Check if we already have diet data for this date
     const existingDiet = dietHistory.find(
       (diet) => diet.date === dateString
     );
@@ -338,8 +349,6 @@ function DietPageContent() {
       // Create a new diet day based on the current plan
       createNewDietDay(dateString)
     }
-    
-    setCurrentDate(date)
   }
   
   const goToPreviousDay = () => {
@@ -351,11 +360,35 @@ function DietPageContent() {
   const goToNextDay = () => {
     const nextDay = new Date(currentDate)
     nextDay.setDate(nextDay.getDate() + 1)
+    
+    // Don't allow navigation to future dates
+    const now = new Date()
+    if (nextDay > now) {
+      toast({
+        title: "Cannot Navigate to Future",
+        description: "You cannot view future dates.",
+        variant: "destructive",
+      })
+      return
+    }
+    
     navigateToDate(nextDay)
   }
   
   const moveToNextWeek = () => {
     const nextWeek = addWeeks(currentDate, 1)
+    
+    // Don't allow navigation to future dates
+    const now = new Date()
+    if (nextWeek > now) {
+      toast({
+        title: "Cannot Navigate to Future",
+        description: "You cannot view future dates.",
+        variant: "destructive",
+      })
+      return
+    }
+    
     navigateToDate(nextWeek)
   }
   
@@ -615,6 +648,14 @@ function DietPageContent() {
         return false; // Return false instead of throwing
       }
       
+      // Validate that the date is not in the future
+      const dateObj = new Date(dateString);
+      const now = new Date();
+      if (dateObj > now) {
+        console.warn(`Future date detected in saveDailyMacrosForDashboard: ${dateString}. Skipping save.`);
+        return false; // Skip saving for future dates
+      }
+      
       // Check if there are any completed items
       let hasCompletedItems = false;
       for (const meal of meals) {
@@ -745,283 +786,6 @@ function DietPageContent() {
     safeSetItem("dietHistory", dietHistory);
   }
 
-  // Update the saveProgress function to save to Supabase
-  const saveProgress = async () => {
-    if (!currentDietPlan || !currentDate || !currentDietDay) {
-      toast({
-        title: "No Diet Plan Available",
-        description: "There is no diet plan to save for this date.",
-        variant: "destructive",
-      });
-      return;
-    }
-    
-    // Show saving indicator
-    setSaving();
-    
-    try {
-      // Create a copy of the current diet day with an ID if it doesn't have one
-      const dietDayToSave: DietDay = {
-        ...currentDietDay,
-        id: currentDietDay.id || uuidv4(),
-      };
-      
-      // Validate the diet day before saving
-      if (!Array.isArray(dietDayToSave.meals)) {
-        console.error("Diet day meals is not an array:", dietDayToSave.meals);
-        setError("Invalid diet day data: meals is not an array");
-        toast({
-          title: "Error",
-          description: "Invalid diet day data. Please try again.",
-          variant: "destructive",
-        });
-        return;
-      }
-      
-      // Ensure date is in the correct format
-      if (!dietDayToSave.date || !/^\d{4}-\d{2}-\d{2}$/.test(dietDayToSave.date)) {
-        console.error("Invalid date format:", dietDayToSave.date);
-        setError(`Invalid date format: ${dietDayToSave.date}`);
-        toast({
-          title: "Error",
-          description: "Invalid date format. Please try again.",
-          variant: "destructive",
-        });
-        return;
-      }
-      
-      console.log("Saving diet day:", {
-        id: dietDayToSave.id,
-        date: dietDayToSave.date,
-        meals: `${dietDayToSave.meals.length} meals`,
-        completed: dietDayToSave.completed
-      });
-      
-      // Save to Supabase
-      const success = await saveDietDay(dietDayToSave, {
-        onSaving: () => {
-          // This is handled by the setSaving() call above
-        },
-        onSuccess: () => {
-          setSaved("Diet progress saved to Supabase");
-          setLastSaved(new Date());
-          
-          // Also save the macros for the dashboard
-          // Wrap in try/catch and don't await to prevent blocking
-          try {
-            saveDailyMacrosForDashboard(dietDayToSave.meals, dietDayToSave.date)
-              .then(result => {
-                if (!result) {
-                  console.warn("Failed to save macros, but diet data was saved successfully");
-                }
-              })
-              .catch(error => {
-                const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-                console.error("Error saving macros in saveProgress:", errorMessage, error);
-                // Don't show an error toast here since the diet data was saved successfully
-              });
-          } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            console.error("Exception when trying to save macros:", errorMessage, error);
-          }
-        },
-        onError: (error) => {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          setError(`Failed to save diet progress: ${errorMessage}`);
-          console.error("Error saving diet day:", error);
-          toast({
-            title: "Error",
-            description: "Failed to save diet progress. Please try again.",
-            variant: "destructive",
-          });
-        }
-      });
-      
-      if (!success) {
-        setError("Failed to save diet progress");
-        toast({
-          title: "Error",
-          description: "Failed to save diet progress. Please try again.",
-          variant: "destructive",
-        });
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      setError(`Error: ${errorMessage}`);
-      console.error("Exception in saveProgress:", error);
-      toast({
-        title: "Error",
-        description: `Failed to save diet progress: ${errorMessage}`,
-        variant: "destructive",
-      });
-    }
-  };
-  
-  const resetDay = () => {
-    // Create a new diet day based on the current plan
-    const dateString = getLocalDateString(currentDate);
-    
-    // Update diet history by removing the entry for the current date
-    const updatedHistory = dietHistory.filter(
-      (diet) => diet.date !== dateString
-    )
-    
-    // Update macro history by removing the entry for the current date
-    const macroHistory = safeGetItem<DailyMacros[]>("macroHistory", [])
-    const updatedMacroHistory = macroHistory.filter(
-      (macro) => macro.date !== dateString
-    )
-    
-    // Save updated histories with data cleanup
-    safeSetItem("dietHistory", updatedHistory, {
-      maxItems: 90, // Keep data for last 90 days
-      maxAge: 90,   // Remove entries older than 90 days
-    });
-    
-    safeSetItem("macroHistory", updatedMacroHistory, {
-      maxItems: 90, // Keep data for last 90 days
-      maxAge: 90,   // Remove entries older than 90 days
-    });
-    
-    // Update state
-    setDietHistory(updatedHistory)
-    
-    // Create a new diet day after updating the history
-    setTimeout(() => {
-      createNewDietDay(dateString)
-    }, 0)
-    
-    // Show success toast
-    toast({
-      title: "Day Reset",
-      description: "Your diet for today has been reset to the plan default.",
-    })
-  }
-  
-  // Helper functions for UI
-  const getMealConsumedCalories = (mealIndex: number) => {
-    if (!currentDietDay) return 0
-    
-    // Add defensive check to ensure the meal exists
-    const meal = currentDietDay.meals[mealIndex]
-    if (!meal || !meal.items) return 0
-    
-    return meal.items
-      .filter(item => item.completed)
-      .reduce((sum, item) => sum + item.calories, 0)
-  }
-  
-  const getMealConsumedProtein = (mealIndex: number) => {
-    if (!currentDietDay) return 0
-    
-    // Add defensive check to ensure the meal exists
-    const meal = currentDietDay.meals[mealIndex]
-    if (!meal || !meal.items) return 0
-    
-    return meal.items
-      .filter(item => item.completed)
-      .reduce((sum, item) => sum + item.protein, 0)
-  }
-  
-  const getWeekDays = (date: Date) => {
-    const startDate = startOfWeek(date, { weekStartsOn: 1 }) // Start on Monday
-    const weekDates = []
-    
-    for (let i = 0; i < 7; i++) {
-      const date = new Date(startDate)
-      date.setDate(date.getDate() + i)
-      weekDates.push(date)
-    }
-    
-    return weekDates
-  }
-  
-  const navigateWeek = (direction: 'prev' | 'next') => {
-    const newDate = direction === 'prev' 
-      ? addWeeks(currentDate, -1) 
-      : addWeeks(currentDate, 1)
-    navigateToDate(newDate)
-  }
-  
-  const getDayData = (date: Date) => {
-    const dateString = getLocalDateString(date)
-    const dietDay = dietHistory.find(day => day.date === dateString)
-    
-    return {
-      hasDiet: !!dietDay,
-      isCompleted: dietDay?.completed || false
-    }
-  }
-  
-  const isToday = (date: Date) => {
-    return getLocalDateString(date) === getTodayString();
-  }
-  
-  const hasDietPlan = (date: Date) => {
-    const dateString = getLocalDateString(date)
-    return dietHistory.some((diet) => diet.date === dateString)
-  }
-  
-  const isDietCompleted = (date: Date) => {
-    const dateString = getLocalDateString(date)
-    const diet = dietHistory.find((diet) => diet.date === dateString)
-    return diet ? diet.completed : false
-  }
-  
-  const formatCurrentDate = (date: Date) => {
-    return format(date, "EEEE, MMMM d, yyyy")
-  }
-  
-  // Calculate total consumed nutrients for the day
-  const getTotalConsumed = () => {
-    if (!currentDietDay || !currentDietDay.meals) {
-      return { calories: 0, protein: 0, carbs: 0, fats: 0 }
-    }
-    
-    return currentDietDay.meals.reduce(
-      (totals, meal) => {
-        if (meal && meal.items) {
-          meal.items.forEach(item => {
-            if (item && item.completed) {
-              totals.calories += item.calories || 0
-              totals.protein += item.protein || 0
-              totals.carbs += item.carbs || 0
-              totals.fats += item.fats || 0
-            }
-          })
-        }
-        return totals
-      },
-      { calories: 0, protein: 0, carbs: 0, fats: 0 }
-    )
-  }
-  
-  // Calculate target nutrients for the day
-  const getTargets = () => {
-    if (!currentDietPlan) {
-      return {
-        calories: 0,
-        protein: 0,
-        carbs: 0,
-        fats: 0
-      }
-    }
-    
-    return {
-      calories: currentDietPlan.targetCalories || 0,
-      protein: currentDietPlan.targetProtein || 0,
-      carbs: currentDietPlan.targetCarbs || 0,
-      fats: currentDietPlan.targetFats || 0
-    }
-  }
-  
-  // Calculate percentage of target consumed
-  const getPercentage = (consumed: number, target: number) => {
-    if (target === 0) return 0
-    const percentage = (consumed / target) * 100
-    return Math.min(percentage, 100) // Cap at 100%
-  }
-  
   // Update the autoSaveDietProgress function to save to Supabase
   const autoSaveDietProgress = async (meals: Meal[], dateOverride?: string) => {
     const dateString = dateOverride || getLocalDateString(currentDate);
@@ -1035,6 +799,14 @@ function DietPageContent() {
     if (!dateString || !/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
       console.error("Invalid date format in autoSaveDietProgress:", dateString);
       return false;
+    }
+    
+    // Validate that the date is not in the future
+    const dateObj = new Date(dateString);
+    const now = new Date();
+    if (dateObj > now) {
+      console.warn(`Future date detected in autoSaveDietProgress: ${dateString}. Skipping save.`);
+      return false; // Skip saving for future dates
     }
     
     // Update diet history first
@@ -1117,6 +889,288 @@ function DietPageContent() {
       console.error("Error details:", errorDetails);
       return false;
     }
+  };
+  
+  const handleDateChange = (date: Date | undefined) => {
+    if (!date || !(date instanceof Date) || isNaN(date.getTime())) {
+      console.error("Invalid date selected:", date);
+      return;
+    }
+    
+    // Don't allow future dates
+    const now = new Date();
+    if (date > now) {
+      console.warn("Future date selected, defaulting to today");
+      setCurrentDate(new Date());
+      return;
+    }
+    
+    // Set the date if it's valid
+    setCurrentDate(date);
+  };
+  
+  // React to diet plan changes
+  useEffect(() => {
+    console.log("Diet plan changed to:", currentDietPlan?.name);
+    
+    if (!currentDietPlan) return;
+    
+    // Skip if this is NOT the initial render (we only want to run this on first change)
+    if (!isInitialMount.current) {
+      const dateString = getLocalDateString(currentDate);
+      const existingDiet = dietHistory.find((diet) => diet.date === dateString);
+      
+      if (existingDiet) {
+        console.log("Found existing diet progress for today, using it instead of creating new");
+        setCurrentDietDay(existingDiet);
+      } else {
+        console.log("No existing diet progress found, creating new diet day");
+        createNewDietDay(dateString);
+      }
+    }
+    
+  }, [currentDietPlan, currentDate, dietHistory]);
+  
+  // Update saveProgress to use debounced macro save
+  const saveProgress = async () => {
+    if (!currentDietPlan || !currentDate || !currentDietDay) {
+      toast({
+        title: "No Diet Plan Available",
+        description: "There is no diet plan to save for this date.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setSaving();
+    
+    try {
+      const dietDayToSave: DietDay = {
+        ...currentDietDay,
+        id: currentDietDay.id || uuidv4(),
+      };
+      
+      // Validation checks...
+      
+      const success = await saveDietDay(dietDayToSave, {
+        onSaving: () => {},
+        onSuccess: () => {
+          setSaved("Diet progress saved to Supabase");
+          setLastSaved(new Date());
+          
+          // Use debounced macro save
+          if (dietDayToSave.meals && dietDayToSave.date) {
+            debouncedSaveMacros(dietDayToSave.meals, dietDayToSave.date);
+          }
+        },
+        onError: (error) => {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          setError(`Failed to save diet progress: ${errorMessage}`);
+          console.error("Error saving diet day:", error);
+          toast({
+            title: "Error",
+            description: "Failed to save diet progress. Please try again.",
+            variant: "destructive",
+          });
+        }
+      });
+      
+      if (!success) {
+        setError("Failed to save diet progress");
+        toast({
+          title: "Error",
+          description: "Failed to save diet progress. Please try again.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      setError(`Error: ${errorMessage}`);
+      console.error("Exception in saveProgress:", error);
+      toast({
+        title: "Error",
+        description: `Failed to save diet progress: ${errorMessage}`,
+        variant: "destructive",
+      });
+    }
+  };
+  
+  // Helper functions for UI
+  const getMealConsumedCalories = (mealIndex: number) => {
+    if (!currentDietDay) return 0
+    
+    // Add defensive check to ensure the meal exists
+    const meal = currentDietDay.meals[mealIndex]
+    if (!meal || !meal.items) return 0
+    
+    return meal.items
+      .filter(item => item.completed)
+      .reduce((sum, item) => sum + item.calories, 0)
+  }
+  
+  const getMealConsumedProtein = (mealIndex: number) => {
+    if (!currentDietDay) return 0
+    
+    // Add defensive check to ensure the meal exists
+    const meal = currentDietDay.meals[mealIndex]
+    if (!meal || !meal.items) return 0
+    
+    return meal.items
+      .filter(item => item.completed)
+      .reduce((sum, item) => sum + item.protein, 0)
+  }
+  
+  const getWeekDays = (date: Date) => {
+    const startDate = startOfWeek(date, { weekStartsOn: 1 }) // Start on Monday
+    const weekDates = []
+    
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(startDate)
+      date.setDate(date.getDate() + i)
+      weekDates.push(date)
+    }
+    
+    return weekDates
+  }
+  
+  const navigateWeek = (direction: 'prev' | 'next') => {
+    // Calculate the new date
+    const newDate = direction === 'prev' 
+      ? addWeeks(currentDate, -1)
+      : addWeeks(currentDate, 1)
+    
+    // Don't allow navigation to future dates
+    const now = new Date()
+    if (direction === 'next' && newDate > now) {
+      toast({
+        title: "Cannot Navigate to Future",
+        description: "You cannot view future dates.",
+        variant: "destructive",
+      })
+      return
+    }
+    
+    navigateToDate(newDate)
+  }
+  
+  const getDayData = (date: Date) => {
+    const dateString = getLocalDateString(date)
+    const dietDay = dietHistory.find(day => day.date === dateString)
+    
+    return {
+      hasDiet: !!dietDay,
+      isCompleted: dietDay?.completed || false
+    }
+  }
+  
+  const isToday = (date: Date) => {
+    return getLocalDateString(date) === getTodayString();
+  }
+  
+  const hasDietPlan = (date: Date) => {
+    const dateString = getLocalDateString(date)
+    return dietHistory.some((diet) => diet.date === dateString)
+  }
+  
+  const isDietCompleted = (date: Date) => {
+    const dateString = getLocalDateString(date)
+    const diet = dietHistory.find((diet) => diet.date === dateString)
+    return diet ? diet.completed : false
+  }
+  
+  const formatCurrentDate = (date: Date) => {
+    return format(date, "EEEE, MMMM d, yyyy")
+  }
+  
+  // Calculate total consumed nutrients for the day
+  const getTotalConsumed = () => {
+    if (!currentDietDay || !currentDietDay.meals) {
+      return { calories: 0, protein: 0, carbs: 0, fats: 0 }
+    }
+    
+    return currentDietDay.meals.reduce(
+      (totals, meal) => {
+        if (meal && meal.items) {
+          meal.items.forEach(item => {
+            if (item && item.completed) {
+              totals.calories += item.calories || 0
+              totals.protein += item.protein || 0
+              totals.carbs += item.carbs || 0
+              totals.fats += item.fats || 0
+            }
+          })
+        }
+        return totals
+      },
+      { calories: 0, protein: 0, carbs: 0, fats: 0 }
+    )
+  }
+  
+  // Calculate target nutrients for the day
+  const getTargets = () => {
+    if (!currentDietPlan) {
+      return {
+        calories: 0,
+        protein: 0,
+        carbs: 0,
+        fats: 0
+      }
+    }
+    
+    return {
+      calories: currentDietPlan.targetCalories || 0,
+      protein: currentDietPlan.targetProtein || 0,
+      carbs: currentDietPlan.targetCarbs || 0,
+      fats: currentDietPlan.targetFats || 0
+    }
+  }
+  
+  // Calculate percentage of target consumed
+  const getPercentage = (consumed: number, target: number) => {
+    if (target === 0) return 0
+    const percentage = (consumed / target) * 100
+    return Math.min(percentage, 100) // Cap at 100%
+  }
+  
+  const resetDay = () => {
+    // Create a new diet day based on the current plan
+    const dateString = getLocalDateString(currentDate);
+    
+    // Update diet history by removing the entry for the current date
+    const updatedHistory = dietHistory.filter(
+      (diet) => diet.date !== dateString
+    );
+    
+    // Update macro history by removing the entry for the current date
+    const macroHistory = safeGetItem<DailyMacros[]>("macroHistory", []);
+    const updatedMacroHistory = macroHistory.filter(
+      (macro) => macro.date !== dateString
+    );
+    
+    // Save updated histories with data cleanup
+    safeSetItem("dietHistory", updatedHistory, {
+      maxItems: 90, // Keep data for last 90 days
+      maxAge: 90,   // Remove entries older than 90 days
+    });
+    
+    safeSetItem("macroHistory", updatedMacroHistory, {
+      maxItems: 90, // Keep data for last 90 days
+      maxAge: 90,   // Remove entries older than 90 days
+    });
+    
+    // Update state
+    setDietHistory(updatedHistory);
+    
+    // Create a new diet day after updating the history
+    setTimeout(() => {
+      createNewDietDay(dateString);
+    }, 0);
+    
+    // Show success toast
+    toast({
+      title: "Day Reset",
+      description: "Your diet for today has been reset to the plan default.",
+    });
   };
   
   // Render the diet page
