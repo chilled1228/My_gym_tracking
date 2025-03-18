@@ -34,6 +34,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Separator } from "@/components/ui/separator"
+import { cn } from "@/lib/utils"
+import { getLocalDateString, getTodayString, dateFromLocalString } from "@/lib/utils"
 
 interface DailyMacros {
   id?: string
@@ -94,10 +97,17 @@ function DietPageContent() {
   const [lastSaved, setLastSaved] = useState<Date | null>(null)
   const [showWeeklyView, setShowWeeklyView] = useState(false)
   
-  // Check plan display consistency on mount
+  // Reference to track initial mount for consistency check
+  const isInitialMount = { current: true };
+  
+  // Check plan display consistency on mount but don't repeat excessively
   useEffect(() => {
-    // Ensure the diet plan is displayed correctly
-    checkPlanDisplayConsistency();
+    if (isInitialMount.current) {
+      // Only do consistency check on initial mount, not on rerenders
+      console.log("Initial mount - checking plan display consistency");
+      checkPlanDisplayConsistency();
+      isInitialMount.current = false;
+    }
   }, [checkPlanDisplayConsistency]);
   
   // Load diet history on mount
@@ -105,9 +115,8 @@ function DietPageContent() {
     const loadDietData = async () => {
       setIsLoading(true)
       try {
-        // Get today's date string
-        const today = new Date();
-        const todayString = today.toISOString().split('T')[0];
+        // Get today's date string using our timezone-aware function
+        const todayString = getTodayString();
         
         // Try to get today's diet from Supabase
         const dietDayFromSupabase = await getDietForDate(todayString);
@@ -139,7 +148,7 @@ function DietPageContent() {
           createNewDietDay(todayString);
         }
         
-        setCurrentDate(today);
+        setCurrentDate(new Date());
       } catch (error) {
         console.error("Error loading diet data:", error);
         toast({
@@ -194,7 +203,7 @@ function DietPageContent() {
     if (!currentDietPlan) return;
     
     // When the diet plan changes, we need to check if we have existing progress for today
-    const dateString = currentDate.toISOString().split('T')[0];
+    const dateString = getLocalDateString(currentDate);
     
     // Check if we have existing progress for this date in history
     const existingDiet = dietHistory.find(
@@ -219,11 +228,14 @@ function DietPageContent() {
     // Skip if we don't have a diet plan yet
     if (!currentDietPlan) return;
     
-    const dateString = currentDate.toISOString().split('T')[0];
+    const dateString = getLocalDateString(currentDate);
     
     const loadDietForDate = async () => {
       setIsLoading(true);
       try {
+        // Use timezone-aware function for date string
+        const dateString = getLocalDateString(currentDate);
+        
         // Try to get diet from Supabase first
         const dietFromSupabase = await getDietForDate(dateString);
         
@@ -315,10 +327,10 @@ function DietPageContent() {
       updateDietHistory(currentDietDay.meals, currentDietDay.date);
     }
     
-    const dateString = date.toISOString().split('T')[0]
+    const dateString = getLocalDateString(date);
     const existingDiet = dietHistory.find(
       (diet) => diet.date === dateString
-    )
+    );
     
     if (existingDiet) {
       setCurrentDietDay(existingDiet)
@@ -428,7 +440,7 @@ function DietPageContent() {
   }
   
   const updateDietHistory = (meals: Meal[], dateOverride?: string) => {
-    const dateString = dateOverride || currentDate.toISOString().split('T')[0];
+    const dateString = dateOverride || getLocalDateString(currentDate);
     
     // Check if we already have an entry for this date
     const existingIndex = dietHistory.findIndex(
@@ -462,7 +474,7 @@ function DietPageContent() {
     setDietHistory(updatedHistory);
     
     // Update current diet day if it's the current date
-    if (dateString === currentDate.toISOString().split('T')[0]) {
+    if (dateString === getLocalDateString(currentDate)) {
       setCurrentDietDay({
         date: dateString,
         meals,
@@ -847,7 +859,7 @@ function DietPageContent() {
   
   const resetDay = () => {
     // Create a new diet day based on the current plan
-    const dateString = currentDate.toISOString().split('T')[0]
+    const dateString = getLocalDateString(currentDate);
     
     // Update diet history by removing the entry for the current date
     const updatedHistory = dietHistory.filter(
@@ -932,7 +944,7 @@ function DietPageContent() {
   }
   
   const getDayData = (date: Date) => {
-    const dateString = date.toISOString().split('T')[0]
+    const dateString = getLocalDateString(date)
     const dietDay = dietHistory.find(day => day.date === dateString)
     
     return {
@@ -942,17 +954,16 @@ function DietPageContent() {
   }
   
   const isToday = (date: Date) => {
-    const today = new Date()
-    return isSameDay(date, today)
+    return getLocalDateString(date) === getTodayString();
   }
   
   const hasDietPlan = (date: Date) => {
-    const dateString = date.toISOString().split('T')[0]
+    const dateString = getLocalDateString(date)
     return dietHistory.some((diet) => diet.date === dateString)
   }
   
   const isDietCompleted = (date: Date) => {
-    const dateString = date.toISOString().split('T')[0]
+    const dateString = getLocalDateString(date)
     const diet = dietHistory.find((diet) => diet.date === dateString)
     return diet ? diet.completed : false
   }
@@ -1013,7 +1024,7 @@ function DietPageContent() {
   
   // Update the autoSaveDietProgress function to save to Supabase
   const autoSaveDietProgress = async (meals: Meal[], dateOverride?: string) => {
-    const dateString = dateOverride || currentDate.toISOString().split('T')[0];
+    const dateString = dateOverride || getLocalDateString(currentDate);
     
     // Validate inputs
     if (!Array.isArray(meals)) {
@@ -1135,7 +1146,7 @@ function DietPageContent() {
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem 
                     onClick={() => {
-                      const dateString = currentDate.toISOString().split('T')[0]
+                      const dateString = getLocalDateString(currentDate)
                       
                       // Update diet history by removing the entry for the current date
                       const updatedHistory = dietHistory.filter(
@@ -1281,7 +1292,7 @@ function DietPageContent() {
                     <div className="flex space-x-1 min-w-max">
                       {getWeekDays(currentDate).map((date) => (
                         <div
-                          key={date.toISOString()}
+                          key={getLocalDateString(date)}
                           onClick={() => navigateToDate(date)}
                           className={`flex flex-col items-center justify-center p-1 rounded-lg cursor-pointer min-w-[36px] ${
                             isSameDay(date, currentDate)

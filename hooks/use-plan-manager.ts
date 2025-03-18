@@ -375,6 +375,9 @@ export function usePlanManager(): UsePlanManagerReturn {
     safeSetItem("currentWorkoutPlan", currentWorkoutPlan);
   }, [currentWorkoutPlan]);
 
+  // For debouncing the consistency check
+  const [lastCheckTime, setLastCheckTime] = useState<number>(0);
+  
   // Function to force reload the current plans from localStorage
   const forceReloadPlans = () => {
     try {
@@ -413,12 +416,20 @@ export function usePlanManager(): UsePlanManagerReturn {
             meals: []
           })
           console.log("Cleared diet plan state")
-        } else if (currentDietPlanIdFromStorage === "fitness-diet") {
-          // Use the default diet plan
+        } else if (currentDietPlanIdFromStorage === "fitness-diet" || currentDietPlanIdFromStorage === "default") {
+          // Handle both "fitness-diet" and "default" IDs by using the default diet plan
+          // This fixes the infinite loop issue when "default" is stored in localStorage
           const defaultPlan = dietPlans[0]
+          
+          // If the ID was "default", update it to "fitness-diet" in localStorage
+          if (currentDietPlanIdFromStorage === "default") {
+            safeSetItem("currentDietPlanId", "fitness-diet");
+            console.log("Updated 'default' ID to 'fitness-diet' in localStorage");
+          }
+          
           console.log("Setting default diet plan:", defaultPlan);
           setCurrentDietPlan(defaultPlan)
-          console.log("No custom diet plan found, using default")
+          console.log("Using default diet plan")
         } else {
           // Clear the state if the ID doesn't match any known plan
           console.log("Unknown diet plan ID, clearing diet plan state");
@@ -443,10 +454,24 @@ export function usePlanManager(): UsePlanManagerReturn {
   // Function to check if the current diet plan is displayed correctly
   const checkPlanDisplayConsistency = () => {
     try {
+      // Debounce the consistency check (once per 5 seconds)
+      const now = Date.now();
+      if (now - lastCheckTime < 5000) {
+        return; // Skip if we just checked recently
+      }
+      setLastCheckTime(now);
+      
       console.log("Checking diet plan display consistency...");
       
       // Get the current diet plan ID from localStorage
       const currentDietPlanIdFromStorage = safeGetItem<string>("currentDietPlanId", "fitness-diet");
+      
+      // Special handling for "default" ID to match it with "fitness-diet"
+      if (currentDietPlanIdFromStorage === "default") {
+        safeSetItem("currentDietPlanId", "fitness-diet");
+        console.log("Updated 'default' ID to 'fitness-diet' in localStorage");
+        return; // Don't force reload, just update the ID
+      }
       
       // Check if the current diet plan ID matches what's in localStorage
       if (currentDietPlan.id !== currentDietPlanIdFromStorage) {
@@ -561,11 +586,14 @@ export function usePlanManager(): UsePlanManagerReturn {
       const defaultPlan = dietPlans[0];
       setCurrentDietPlan(defaultPlan);
       
-      // Save the current diet plan ID to localStorage
-      safeSetItem("currentDietPlanId", defaultPlan.id);
+      // Save the current diet plan ID to localStorage - ensure we use "fitness-diet" not "default"
+      safeSetItem("currentDietPlanId", "fitness-diet");
       
       // Remove custom diet plans from localStorage
       safeSetItem("customDietPlans", []);
+      
+      // Reset the lastCheckTime to allow immediate consistency check
+      setLastCheckTime(0);
       
       console.log("Emergency reset complete");
     } catch (error) {
@@ -573,9 +601,16 @@ export function usePlanManager(): UsePlanManagerReturn {
     }
   }
   
-  // Load plans on mount
+  // Load plans on mount - but only if needed
   useEffect(() => {
-    forceReloadPlans();
+    // Check if we already have a valid diet plan
+    const hasValidDietPlan = currentDietPlan && currentDietPlan.id === "fitness-diet";
+    if (!hasValidDietPlan) {
+      console.log("No valid diet plan found on mount, forcing reload");
+      forceReloadPlans();
+    } else {
+      console.log("Valid diet plan already loaded, skipping initial reload");
+    }
   }, []);
   
   return {
