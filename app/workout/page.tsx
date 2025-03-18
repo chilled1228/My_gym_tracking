@@ -14,10 +14,6 @@ import Link from "next/link"
 import { useSyncIndicator } from "@/hooks/use-sync-indicator"
 import { format, addWeeks, startOfWeek, isAfter, isBefore, startOfDay, isSameDay } from "date-fns"
 import { usePlanManager } from "@/hooks/use-plan-manager"
-import { PlanSelector } from "@/components/plan-selector"
-import { PlanImport } from "@/components/plan-import"
-import { PlanExport } from "@/components/plan-export"
-import { Exercise, WorkoutDay } from "@/lib/plan-templates"
 import {
   Dialog,
   DialogContent,
@@ -42,6 +38,20 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
+// Define workout-related interfaces
+interface Exercise {
+  name: string
+  sets: string
+  reps: number
+  completed: boolean
+  tooltip?: string
+}
+
+interface WorkoutDay {
+  name: string
+  exercises: Exercise[]
+}
+
 // New interface for tracking workouts by date
 interface DatedWorkout {
   date: string // ISO date string
@@ -62,10 +72,6 @@ export default function WorkoutPage() {
   // Use the plan manager hook
   const { 
     currentWorkoutPlan, 
-    availableWorkoutPlans, 
-    currentWorkoutPlanId, 
-    changeWorkoutPlan,
-    importPlans,
     checkPlanDisplayConsistency,
     emergencyResetAndReload,
     deleteAllWorkoutPlans
@@ -523,6 +529,25 @@ export default function WorkoutPage() {
         }
       });
       
+      // Also save the current workout to ensure it's available on page refresh
+      if (currentDatedWorkout && currentDatedWorkout.workout) {
+        // Update the current workout plan with the completed exercises
+        const updatedWorkoutPlan = { ...currentWorkoutPlan };
+        
+        // Find the day that matches the current workout
+        const dayIndex = updatedWorkoutPlan.days.findIndex(
+          (day: any) => day.name === currentDatedWorkout.workout.name
+        );
+        
+        if (dayIndex >= 0) {
+          // Update the exercises for this day with the completed status
+          updatedWorkoutPlan.days[dayIndex].exercises = currentDatedWorkout.workout.exercises;
+          
+          // Save the updated workout plan
+          safeSetItem("currentWorkoutPlan", updatedWorkoutPlan);
+        }
+      }
+      
       // Update last saved timestamp
       setLastSaved(new Date());
       
@@ -682,8 +707,6 @@ export default function WorkoutPage() {
               <RefreshCw className="h-4 w-4 mr-2" />
               Refresh Plan
             </Button>
-            
-            <PlanImport onImport={importPlans} />
             
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

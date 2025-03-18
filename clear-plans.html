@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clear Plans from localStorage</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    button {
+      background-color: #f44336;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      margin: 10px 0;
+    }
+    button:hover {
+      background-color: #d32f2f;
+    }
+    .result {
+      margin-top: 20px;
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background-color: #f9f9f9;
+    }
+    .success {
+      color: #4caf50;
+      font-weight: bold;
+    }
+    .error {
+      color: #f44336;
+      font-weight: bold;
+    }
+    h3 {
+      margin-top: 30px;
+      border-bottom: 1px solid #eee;
+      padding-bottom: 10px;
+    }
+    pre {
+      background-color: #f5f5f5;
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>Clear Plans from localStorage</h1>
+  <p>This tool will clear all plan-related data from localStorage. This action cannot be undone.</p>
+  
+  <h3>Plan-related keys that will be cleared:</h3>
+  <ul id="keys-list">
+    <li><code>customWorkoutPlans</code> - Custom workout plans</li>
+    <li><code>currentWorkoutPlanId</code> - Current workout plan ID</li>
+    <li><code>workoutHistory</code> - Workout history</li>
+    <li><code>workoutProgress</code> - Workout progress</li>
+    <li><code>customDietPlans</code> - Custom diet plans</li>
+    <li><code>currentDietPlanId</code> - Current diet plan ID</li>
+    <li><code>dietHistory</code> - Diet history</li>
+    <li><code>macroHistory</code> - Macro history</li>
+    <li><code>currentDietDay</code> - Current diet day</li>
+    <li><code>planConsistencyAttempts</code> - Plan consistency check attempts</li>
+  </ul>
+
+  <button id="clear-all">Clear All Plan Data</button>
+  <button id="clear-diet-only">Clear Diet Plans Only</button>
+  <button id="clear-workout-only">Clear Workout Plans Only</button>
+  <button id="show-storage">Show Current localStorage</button>
+  
+  <div id="result" class="result" style="display: none;"></div>
+  
+  <div id="storage-display" style="display: none;">
+    <h3>Current localStorage Contents:</h3>
+    <pre id="storage-content"></pre>
+  </div>
+
+  <script>
+    // Function to clear all plan-related data
+    function clearAllPlanData() {
+      try {
+        const keysToRemove = [
+          // Workout-related data
+          "customWorkoutPlans",
+          "currentWorkoutPlanId",
+          "workoutHistory",
+          "workoutProgress",
+          
+          // Diet-related data
+          "customDietPlans",
+          "currentDietPlanId",
+          "dietHistory",
+          "macroHistory",
+          "currentDietDay",
+          
+          // Consistency check data
+          "planConsistencyAttempts"
+        ];
+        
+        // Clear each key with proper error handling
+        let clearSuccess = true;
+        const clearErrors = [];
+        const clearedKeys = [];
+        
+        keysToRemove.forEach(key => {
+          try {
+            if (localStorage.getItem(key) !== null) {
+              localStorage.removeItem(key);
+              clearedKeys.push(key);
+            }
+          } catch (e) {
+            clearSuccess = false;
+            clearErrors.push(`Failed to remove ${key}: ${e}`);
+          }
+        });
+        
+        // Display result
+        const resultDiv = document.getElementById('result');
+        resultDiv.style.display = 'block';
+        
+        if (clearSuccess) {
+          resultDiv.innerHTML = `<p class="success">Successfully cleared all plan-related data!</p>
+            <p>Cleared keys: ${clearedKeys.length > 0 ? clearedKeys.join(', ') : 'None found'}</p>`;
+        } else {
+          resultDiv.innerHTML = `<p class="error">Some errors occurred while clearing data:</p>
+            <ul>${clearErrors.map(err => `<li>${err}</li>`).join('')}</ul>
+            <p>Cleared keys: ${clearedKeys.join(', ')}</p>`;
+        }
+        
+        // Update storage display if it's visible
+        if (document.getElementById('storage-display').style.display !== 'none') {
+          showStorageContents();
+        }
+      } catch (error) {
+        const resultDiv = document.getElementById('result');
+        resultDiv.style.display = 'block';
+        resultDiv.innerHTML = `<p class="error">Error during clearing: ${error.message}</p>`;
+      }
+    }
+    
+    // Function to clear only diet-related data
+    function clearDietPlansOnly() {
+      try {
+        const keysToRemove = [
+          "customDietPlans",
+          "currentDietPlanId",
+          "dietHistory",
+          "macroHistory",
+          "currentDietDay"
+        ];
+        
+        let clearSuccess = true;
+        const clearErrors = [];
+        const clearedKeys = [];
+        
+        keysToRemove.forEach(key => {
+          try {
+            if (localStorage.getItem(key) !== null) {
+              localStorage.removeItem(key);
+              clearedKeys.push(key);
+            }
+          } catch (e) {
+            clearSuccess = false;
+            clearErrors.push(`Failed to remove ${key}: ${e}`);
+          }
+        });
+        
+        // Display result
+        const resultDiv = document.getElementById('result');
+        resultDiv.style.display = 'block';
+        
+        if (clearSuccess) {
+          resultDiv.innerHTML = `<p class="success">Successfully cleared all diet-related data!</p>
+            <p>Cleared keys: ${clearedKeys.length > 0 ? clearedKeys.join(', ') : 'None found'}</p>`;
+        } else {
+          resultDiv.innerHTML = `<p class="error">Some errors occurred while clearing diet data:</p>
+            <ul>${clearErrors.map(err => `<li>${err}</li>`).join('')}</ul>
+            <p>Cleared keys: ${clearedKeys.join(', ')}</p>`;
+        }
+        
+        // Update storage display if it's visible
+        if (document.getElementById('storage-display').style.display !== 'none') {
+          showStorageContents();
+        }
+      } catch (error) {
+        const resultDiv = document.getElementById('result');
+        resultDiv.style.display = 'block';
+        resultDiv.innerHTML = `<p class="error">Error during clearing diet data: ${error.message}</p>`;
+      }
+    }
+    
+    // Function to clear only workout-related data
+    function clearWorkoutPlansOnly() {
+      try {
+        const keysToRemove = [
+          "customWorkoutPlans",
+          "currentWorkoutPlanId",
+          "workoutHistory",
+          "workoutProgress"
+        ];
+        
+        let clearSuccess = true;
+        const clearErrors = [];
+        const clearedKeys = [];
+        
+        keysToRemove.forEach(key => {
+          try {
+            if (localStorage.getItem(key) !== null) {
+              localStorage.removeItem(key);
+              clearedKeys.push(key);
+            }
+          } catch (e) {
+            clearSuccess = false;
+            clearErrors.push(`Failed to remove ${key}: ${e}`);
+          }
+        });
+        
+        // Display result
+        const resultDiv = document.getElementById('result');
+        resultDiv.style.display = 'block';
+        
+        if (clearSuccess) {
+          resultDiv.innerHTML = `<p class="success">Successfully cleared all workout-related data!</p>
+            <p>Cleared keys: ${clearedKeys.length > 0 ? clearedKeys.join(', ') : 'None found'}</p>`;
+        } else {
+          resultDiv.innerHTML = `<p class="error">Some errors occurred while clearing workout data:</p>
+            <ul>${clearErrors.map(err => `<li>${err}</li>`).join('')}</ul>
+            <p>Cleared keys: ${clearedKeys.join(', ')}</p>`;
+        }
+        
+        // Update storage display if it's visible
+        if (document.getElementById('storage-display').style.display !== 'none') {
+          showStorageContents();
+        }
+      } catch (error) {
+        const resultDiv = document.getElementById('result');
+        resultDiv.style.display = 'block';
+        resultDiv.innerHTML = `<p class="error">Error during clearing workout data: ${error.message}</p>`;
+      }
+    }
+    
+    // Function to show current localStorage contents
+    function showStorageContents() {
+      try {
+        const storageDisplay = document.getElementById('storage-display');
+        const storageContent = document.getElementById('storage-content');
+        
+        storageDisplay.style.display = 'block';
+        
+        // Get all localStorage items
+        const items = {};
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          try {
+            // Try to parse as JSON for better display
+            const value = localStorage.getItem(key);
+            try {
+              items[key] = JSON.parse(value);
+            } catch {
+              items[key] = value;
+            }
+          } catch (e) {
+            items[key] = `[Error reading value: ${e.message}]`;
+          }
+        }
+        
+        storageContent.textContent = JSON.stringify(items, null, 2);
+      } catch (error) {
+        const resultDiv = document.getElementById('result');
+        resultDiv.style.display = 'block';
+        resultDiv.innerHTML = `<p class="error">Error showing storage contents: ${error.message}</p>`;
+      }
+    }
+    
+    // Add event listeners
+    document.getElementById('clear-all').addEventListener('click', clearAllPlanData);
+    document.getElementById('clear-diet-only').addEventListener('click', clearDietPlansOnly);
+    document.getElementById('clear-workout-only').addEventListener('click', clearWorkoutPlansOnly);
+    document.getElementById('show-storage').addEventListener('click', showStorageContents);
+  </script>
+</body>
+</html> 

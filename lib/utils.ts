@@ -463,14 +463,12 @@ export function validateImportedPlans(data: any): {
 }
 
 /**
- * Exports workout and diet plans to a JSON file
- * @param workoutPlans Array of workout plans to export
+ * Exports diet plans to a JSON file
  * @param dietPlans Array of diet plans to export
  * @returns A JSON string containing the exported plans
  */
 export function exportPlansToJson(workoutPlans?: any[], dietPlans?: any[]): string {
   const exportData = {
-    ...(workoutPlans && workoutPlans.length > 0 ? { workoutPlans } : {}),
     ...(dietPlans && dietPlans.length > 0 ? { dietPlans } : {})
   }
   

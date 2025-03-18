@@ -1,6 +1,9 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { ThemeProvider } from '@/components/theme-provider'
+import { DataProvider } from '@/contexts/data-context'
+import { DatabaseStatusProvider } from '@/components/database-status-provider'
+import { Toaster } from 'sonner'
 
 export const metadata: Metadata = {
   title: 'Fitness Tracker',
@@ -31,7 +34,12 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          {children}
+          <DataProvider>
+            <DatabaseStatusProvider>
+              {children}
+            </DatabaseStatusProvider>
+          </DataProvider>
+          <Toaster position="top-center" />
         </ThemeProvider>
       </body>
     </html>

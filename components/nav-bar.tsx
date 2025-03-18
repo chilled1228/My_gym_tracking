@@ -2,7 +2,7 @@
 
 import { usePathname } from "next/navigation"
 import Link from "next/link"
-import { Home, Dumbbell, Utensils, BarChart, PieChart, LucideIcon } from "lucide-react"
+import { Home, Dumbbell, Utensils, BarChart, PieChart, Settings, LucideIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { motion } from "framer-motion"
 
@@ -18,6 +18,7 @@ const navItems: NavItem[] = [
   { href: "/diet", icon: Utensils, label: "Diet" },
   { href: "/progress", icon: BarChart, label: "Progress" },
   { href: "/macros", icon: PieChart, label: "Macros" },
+  { href: "/settings", icon: Settings, label: "Settings" },
 ]
 
 export function NavBar() {

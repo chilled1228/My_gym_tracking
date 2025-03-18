@@ -5,47 +5,22 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Dumbbell, Utensils, BarChart, Calendar, Bell, TrendingUp, Award, ChevronRight, Flame } from "lucide-react"
 import { MobileLayout } from "@/components/mobile-layout"
 import { useEffect, useState } from "react"
-import { safeGetItem } from "@/lib/utils"
 import { PageHeader } from "@/components/page-header"
 import { SectionHeader } from "@/components/section-header"
 import { CardLink } from "@/components/ui/card-link"
 import Link from "next/link"
-
-interface WorkoutDay {
-  name: string
-  exercises: { name: string; sets: string; completed: boolean }[]
-}
-
-interface MealItem {
-  name: string
-  completed: boolean
-  calories: number
-  protein: number
-  carbs: number
-  fats: number
-}
-
-interface Meal {
-  time: string
-  name: string
-  items: MealItem[]
-}
-
-interface DailyMacros {
-  date: string
-  calories: number
-  protein: number
-  carbs: number
-  fats: number
-}
-
-interface DietDay {
-  date: string
-  meals: Meal[]
-  completed: boolean
-}
+import { useData } from "@/contexts/data-context"
+import type { WorkoutDay, Meal, DailyMacros, DietDay, DietPlan } from "@/lib/supabase"
 
 export default function Home() {
+  const { 
+    getWorkoutForDate, 
+    getDietForDate, 
+    getMacrosForDate, 
+    getCurrentDietPlan,
+    getMacroHistory
+  } = useData()
+  
   const [workoutCompletion, setWorkoutCompletion] = useState(0)
   const [dietCompletion, setDietCompletion] = useState(0)
   const [calorieStats, setCalorieStats] = useState({
@@ -55,50 +30,44 @@ export default function Home() {
   })
   const [macroHistory, setMacroHistory] = useState<DailyMacros[]>([])
   
-  // Function to load data from localStorage
-  const loadData = () => {
+  // Function to load data from Supabase
+  const loadData = async () => {
     try {
-      // Get workout completion
-      const workoutPlan = safeGetItem<WorkoutDay[]>("workoutPlan", [])
-      if (workoutPlan.length > 0) {
-        const totalExercises = workoutPlan.reduce((sum: number, day: WorkoutDay) => sum + day.exercises.length, 0)
-        const completedExercises = workoutPlan.reduce(
-          (sum: number, day: WorkoutDay) => sum + day.exercises.filter(ex => ex.completed).length, 
-          0
-        )
-        setWorkoutCompletion(totalExercises > 0 ? Math.round((completedExercises / totalExercises) * 100) : 0)
-      }
-      
-      // Get macro history
-      const history = safeGetItem<DailyMacros[]>("macroHistory", [])
-      
-      // Filter out any invalid entries
-      const validHistory = history.filter(item => 
-        item && typeof item === 'object' && item.date && 
-        typeof item.calories === 'number' && 
-        typeof item.protein === 'number' && 
-        typeof item.carbs === 'number' && 
-        typeof item.fats === 'number'
-      )
-      
-      // Sort by date (newest first) to ensure we get the most recent data
-      const sortedHistory = [...validHistory].sort((a, b) => 
-        new Date(b.date).getTime() - new Date(a.date).getTime()
-      )
-      
-      setMacroHistory(sortedHistory)
-      
       // Get today's date in YYYY-MM-DD format
       const today = new Date().toISOString().split('T')[0]
       console.log("Today's date:", today)
       
-      // Find today's macros in the sorted history
-      const todaysMacros = sortedHistory.find(item => item.date === today)
-      console.log("Found today's macros:", todaysMacros)
+      // Get today's workout
+      const todaysWorkout = await getWorkoutForDate(today)
+      
+      if (todaysWorkout && todaysWorkout.workout && Array.isArray(todaysWorkout.workout.exercises)) {
+        const totalExercises = todaysWorkout.workout.exercises.length
+        const completedExercises = todaysWorkout.workout.exercises.filter(ex => ex.completed).length
+        setWorkoutCompletion(totalExercises > 0 ? Math.round((completedExercises / totalExercises) * 100) : 0)
+      } else {
+        setWorkoutCompletion(0) // No workout for today
+      }
+      
+      // Get macro history
+      const history = await getMacroHistory(10)
+      setMacroHistory(history)
+      
+      // Get today's macros
+      const todaysMacros = await getMacrosForDate(today)
       
       if (todaysMacros) {
         // Get target calories from current diet plan if available
-        const currentDietPlan = safeGetItem<{targetCalories?: number}>("currentDietPlan", {targetCalories: 2000})
+        const currentDietPlan = await getCurrentDietPlan() || {
+          id: "default",
+          name: "Default Diet Plan",
+          description: "Default diet plan",
+          targetCalories: 2000,
+          targetProtein: 150,
+          targetCarbs: 200,
+          targetFats: 50,
+          meals: []
+        }
+        
         const targetCalories = currentDietPlan && typeof currentDietPlan.targetCalories === 'number' ? 
           currentDietPlan.targetCalories : 2000 // Default target
         
@@ -108,51 +77,57 @@ export default function Home() {
           percentage: targetCalories > 0 ? Math.min(100, Math.round((todaysMacros.calories / targetCalories) * 100)) : 0
         })
       } else {
-        // No data for today, check diet history
-        const dietHistory = safeGetItem<DietDay[]>("dietHistory", [])
-        if (Array.isArray(dietHistory) && dietHistory.length > 0) {
-          const todaysDiet = dietHistory.find((item) => item && item.date === today)
-          if (todaysDiet && todaysDiet.meals && Array.isArray(todaysDiet.meals)) {
-            // Calculate calories from diet history
-            const totalCalories = todaysDiet.meals.reduce((sum, meal) => 
-              sum + (meal.items ? meal.items.reduce((mealSum, item) => mealSum + (item.calories || 0), 0) : 0), 0)
-            
-            const consumedCalories = todaysDiet.meals.reduce((sum, meal) => 
-              sum + (meal.items ? meal.items.reduce((mealSum, item) => 
-                mealSum + (item.completed ? (item.calories || 0) : 0), 0) : 0), 0)
-            
-            // Get target calories from current diet plan if available
-            const currentDietPlan = safeGetItem<{targetCalories?: number}>("currentDietPlan", {targetCalories: 2000})
-            const targetCalories = currentDietPlan && typeof currentDietPlan.targetCalories === 'number' ? 
-              currentDietPlan.targetCalories : 2000 // Default target
-            
-            setCalorieStats({
-              consumed: Math.round(consumedCalories),
-              total: targetCalories,
-              percentage: targetCalories > 0 ? Math.min(100, Math.round((consumedCalories / targetCalories) * 100)) : 0
-            })
+        // No macro data for today, check diet history
+        const todaysDiet = await getDietForDate(today)
+        
+        if (todaysDiet && todaysDiet.meals && Array.isArray(todaysDiet.meals)) {
+          // Calculate calories from diet history
+          const totalCalories = todaysDiet.meals.reduce((sum, meal) => 
+            sum + (meal.items ? meal.items.reduce((mealSum, item) => mealSum + (item.calories || 0), 0) : 0), 0)
+          
+          const consumedCalories = todaysDiet.meals.reduce((sum, meal) => 
+            sum + (meal.items ? meal.items.reduce((mealSum, item) => 
+              mealSum + (item.completed ? (item.calories || 0) : 0), 0) : 0), 0)
+          
+          // Get target calories from current diet plan if available
+          const currentDietPlan = await getCurrentDietPlan() || {
+            id: "default",
+            name: "Default Diet Plan",
+            description: "Default diet plan",
+            targetCalories: 2000,
+            targetProtein: 150,
+            targetCarbs: 200,
+            targetFats: 50,
+            meals: []
           }
+          
+          const targetCalories = currentDietPlan && typeof currentDietPlan.targetCalories === 'number' ? 
+            currentDietPlan.targetCalories : 2000 // Default target
+          
+          setCalorieStats({
+            consumed: Math.round(consumedCalories),
+            total: targetCalories,
+            percentage: targetCalories > 0 ? Math.min(100, Math.round((consumedCalories / targetCalories) * 100)) : 0
+          })
         }
       }
       
       // Get diet history for completion percentage
-      const dietHistory = safeGetItem<DietDay[]>("dietHistory", [])
-      if (Array.isArray(dietHistory) && dietHistory.length > 0) {
-        const todaysDiet = dietHistory.find((item) => item && item.date === today)
-        if (todaysDiet && todaysDiet.meals && Array.isArray(todaysDiet.meals)) {
-          const totalItems = todaysDiet.meals.reduce(
-            (sum: number, meal: Meal) => sum + (meal.items && Array.isArray(meal.items) ? meal.items.length : 0), 0
-          )
-          const completedItems = todaysDiet.meals.reduce(
-            (sum: number, meal: Meal) => sum + (meal.items && Array.isArray(meal.items) ? 
-              meal.items.filter((item: MealItem) => item.completed).length : 0), 0
-          )
-          setDietCompletion(totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0)
-        }
+      const todaysDiet = await getDietForDate(today)
+      
+      if (todaysDiet && todaysDiet.meals && Array.isArray(todaysDiet.meals)) {
+        const totalItems = todaysDiet.meals.reduce(
+          (sum: number, meal: Meal) => sum + (meal.items && Array.isArray(meal.items) ? meal.items.length : 0), 0
+        )
+        const completedItems = todaysDiet.meals.reduce(
+          (sum: number, meal: Meal) => sum + (meal.items && Array.isArray(meal.items) ? 
+            meal.items.filter((item) => item.completed).length : 0), 0
+        )
+        setDietCompletion(totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0)
       }
       
     } catch (error) {
-      console.error("Error loading data from localStorage:", error)
+      console.error("Error loading data:", error)
     }
   }
   
@@ -186,20 +161,20 @@ export default function Home() {
   const options = { weekday: 'long', month: 'short', day: 'numeric' } as const
   const formattedDate = today.toLocaleDateString('en-US', options)
   
-  // Get recent macro data (including today)
+  // Calculate overall progress
+  const overallProgress = Math.round((workoutCompletion + dietCompletion) / 2)
+  
+  // Get recent macro history for display
   const getRecentMacros = () => {
     if (macroHistory.length === 0) return []
     
     // macroHistory is already sorted by date (newest first)
-    // Just take the first 3 entries
+    // Return the 3 most recent days
     return macroHistory.slice(0, 3)
   }
   
   const recentMacros = getRecentMacros()
   const hasHistory = recentMacros.length > 0
-  
-  // Calculate overall progress
-  const overallProgress = Math.round((workoutCompletion + dietCompletion) / 2)
   
   return (
     <MobileLayout>
